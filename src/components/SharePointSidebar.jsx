@@ -19,8 +19,8 @@ export default function SharePointSidebar() {
             `flex items-center gap-3 px-4 py-2 rounded-md font-medium transition
             ${
               isActive
-                ? "bg-[#e5f1fb] text-[#0366d6]"
-                : "hover:bg-[#e5f1fb] hover:text-[#0366d6] text-[#323130]"
+                ? "bg-[#e5f1fb] text-amber-900"
+                : "hover:bg-[#e5f1fb] hover:text-amber-900 text-[#323130]"
             }`
           }
           end

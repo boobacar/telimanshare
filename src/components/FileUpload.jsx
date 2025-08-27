@@ -137,7 +137,7 @@ export default function FileUpload({ currentPath = "", onUpload }) {
           className="hidden"
         />
         <span className="text-3xl mb-2">⬇️</span>
-        <div className="font-semibold text-blue-700 mb-1">
+        <div className="font-semibold text-amber-900 mb-1">
           Glissez-déposez <b>un ou plusieurs fichiers</b> ici
           <br />
           ou cliquez pour choisir
@@ -165,7 +165,7 @@ export default function FileUpload({ currentPath = "", onUpload }) {
               <div className="flex-1 max-w-[180px] mr-2">
                 <div className="w-full h-2 bg-gray-200 rounded">
                   <div
-                    className="h-2 bg-gradient-to-r from-blue-400 to-pink-400 rounded transition-all"
+                    className="h-2 bg-gradient-to-r from-green-900 to-amber-900 rounded transition-all"
                     style={{ width: `${f.progress}%` }}
                   />
                 </div>

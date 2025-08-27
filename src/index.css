@@ -3,7 +3,7 @@
   @apply border p-2 rounded w-full;
 }
 .btn-primary {
-  @apply bg-blue-500 text-white px-4 py-2 rounded-lg font-semibold shadow hover:shadow-xl hover:scale-105 transition flex items-center justify-center;
+  @apply bg-amber-900 text-white px-4 py-2 rounded-lg font-semibold shadow hover:shadow-xl hover:scale-105 transition flex items-center justify-center;
 }
 .btn {
   @apply bg-gray-200 text-gray-700 px-3 py-1 rounded-lg font-semibold hover:bg-gray-300 transition;

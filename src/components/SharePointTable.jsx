@@ -352,14 +352,14 @@ export default function SharePointTable({
       {/* Barre d'actions groupées */}
       {selected.length > 0 && (
         <div className="flex items-center gap-4 mb-4 px-4 py-2 bg-white/70 rounded-xl shadow border border-gray-200">
-          <span className="text-blue-700 font-semibold text-base">
+          <span className="text-green-900 font-semibold text-base">
             <span className="bg-blue-50 rounded px-2 py-1">
               {selected.length}
             </span>{" "}
             sélectionné{selected.length > 1 ? "s" : ""}
           </span>
           <button
-            className="flex items-center gap-2 bg-gradient-to-tr from-blue-200 to-gray-100 text-gray-800 px-4 py-2 rounded-lg shadow-sm font-semibold border border-gray-300 hover:shadow-md active:scale-95"
+            className="flex items-center gap-2 bg-gray-100 text-gray-800 px-4 py-2 rounded-lg shadow-sm font-semibold border border-gray-300 hover:shadow-md active:scale-95"
             onClick={handleDeleteSelected}
           >
             <Trash2 size={19} className="text-red-500" />
@@ -390,7 +390,7 @@ export default function SharePointTable({
                     e.target.checked ? selectAll() : unselectAll()
                   }
                   onClick={(e) => e.stopPropagation()}
-                  className="accent-[#0366d6]"
+                  className="accent-amber-900"
                 />
               </th>
               <th className="py-2 px-2 text-left font-normal">Nom</th>
@@ -419,14 +419,14 @@ export default function SharePointTable({
                       checked={selected.includes(fullPath)}
                       onChange={() => toggleSelect({ fullPath })}
                       onClick={(e) => e.stopPropagation()}
-                      className="accent-[#0366d6]"
+                      className="accent-amber-900"
                     />
                   </td>
                   <td
                     className="py-2 px-2 flex items-center gap-2 font-semibold text-[#323130] cursor-pointer"
                     onClick={() => onNavigate && onNavigate(fullPath)}
                   >
-                    <FolderIcon size={18} className="text-[#0366d6]" />
+                    <FolderIcon size={18} className="text-amber-900" />
                     <span>{folder.name}</span>
                   </td>
                   <td className="py-2 px-2 text-[#605e5c] text-sm">
@@ -441,7 +441,7 @@ export default function SharePointTable({
                   <td className="py-2 px-2 text-right">
                     <div className="flex gap-2">
                       <button
-                        className="hover:text-[#0366d6]"
+                        className="hover:text-amber-900"
                         title="Renommer"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -479,7 +479,7 @@ export default function SharePointTable({
                     checked={selected.includes(file.fullPath)}
                     onChange={() => toggleSelect(file)}
                     onClick={(e) => e.stopPropagation()}
-                    className="accent-[#0366d6]"
+                    className="accent-amber-900"
                   />
                 </td>
                 <td className="py-2 px-2 flex items-center gap-2 font-semibold text-[#323130]">
@@ -500,7 +500,7 @@ export default function SharePointTable({
                 <td className="py-2 px-2 text-right">
                   <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
                     <button
-                      className="hover:text-[#0366d6]"
+                      className="hover:text-amber-900"
                       title="Aperçu"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -511,7 +511,7 @@ export default function SharePointTable({
                     </button>
                     <button
                       title="Télécharger"
-                      className="hover:text-[#0366d6]"
+                      className="hover:text-amber-900"
                       onClick={(e) => {
                         e.stopPropagation();
                         forceDownload(
@@ -524,7 +524,7 @@ export default function SharePointTable({
                     </button>
                     <button
                       title="Partager"
-                      className="hover:text-[#0366d6]"
+                      className="hover:text-amber-900"
                       onClick={(e) => {
                         e.stopPropagation();
                         openShare(file);
@@ -533,7 +533,7 @@ export default function SharePointTable({
                       <Share2 size={17} />
                     </button>
                     <button
-                      className="hover:text-[#0366d6]"
+                      className="hover:text-amber-900"
                       title="Renommer"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -584,10 +584,10 @@ export default function SharePointTable({
                 checked={selected.includes(fullPath)}
                 onChange={() => toggleSelect({ fullPath })}
                 onClick={(e) => e.stopPropagation()}
-                className="accent-[#0366d6] mr-1"
+                className="accent-amber-900 mr-1"
               />
               <button onClick={() => onNavigate && onNavigate(fullPath)}>
-                <FolderIcon size={20} className="text-[#0366d6]" />
+                <FolderIcon size={20} className="text-amber-900" />
               </button>
               <div
                 className="flex-1 font-semibold truncate"
@@ -596,7 +596,7 @@ export default function SharePointTable({
                 {folder.name}
               </div>
               <button
-                className="text-gray-400 hover:text-[#0366d6] px-1"
+                className="text-gray-400 hover:text-amber-900 px-1"
                 onClick={(e) => {
                   e.stopPropagation();
                   openRenameFolder(folder);
@@ -627,14 +627,14 @@ export default function SharePointTable({
               checked={selected.includes(file.fullPath)}
               onChange={() => toggleSelect(file)}
               onClick={(e) => e.stopPropagation()}
-              className="accent-[#0366d6] mr-1"
+              className="accent-amber-900 mr-1"
             />
             <span>{getFileIcon(file.name)}</span>
             <div className="flex-1 font-semibold truncate">
               {file.name.replace(/^\d+_/, "")}
             </div>
             <button
-              className="text-gray-400 hover:text-[#0366d6] px-1"
+              className="text-gray-400 hover:text-amber-900 px-1"
               onClick={(e) => {
                 e.stopPropagation();
                 openPreview(file);
@@ -643,7 +643,7 @@ export default function SharePointTable({
               <Eye size={18} />
             </button>
             <button
-              className="text-gray-400 hover:text-[#0366d6] px-1"
+              className="text-gray-400 hover:text-amber-900 px-1"
               onClick={(e) => {
                 e.stopPropagation();
                 forceDownload(file.fullPath, file.name.replace(/^\d+_/, ""));

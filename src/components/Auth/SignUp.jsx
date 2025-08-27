@@ -24,7 +24,9 @@ export default function SignUp() {
       onSubmit={handleSignUp}
       className="flex flex-col gap-4 max-w-sm mx-auto p-6"
     >
-      <h2 className="text-2xl font-bold text-center">S'inscrire</h2>
+      <h2 className="text-2xl font-bold text-green-900 text-center">
+        S'inscrire
+      </h2>
       <input
         className="input border-2 border-blue-200 focus:border-blue-400 transition p-2 rounded w-full"
         type="email"

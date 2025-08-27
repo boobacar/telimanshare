@@ -8,7 +8,7 @@ export default function SharePointBreadcrumb({ currentPath = "", onNavigate }) {
     <nav className="flex items-center text-sm mb-2 pl-1 pt-2 pb-1 flex-wrap">
       <button
         onClick={() => onNavigate("")}
-        className="text-[#0366d6] font-semibold hover:underline"
+        className="text-amber-900 font-semibold hover:underline"
       >
         Documents
       </button>
@@ -21,7 +21,7 @@ export default function SharePointBreadcrumb({ currentPath = "", onNavigate }) {
               onClick={() => onNavigate(path)}
               className={`hover:underline ${
                 idx === parts.length - 1
-                  ? "text-[#0366d6] font-semibold"
+                  ? "text-amber-900 font-semibold"
                   : "text-[#323130]"
               }`}
             >

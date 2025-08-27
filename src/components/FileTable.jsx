@@ -249,7 +249,7 @@ export default function FileTable({
                       e.stopPropagation();
                       toggleSelect(file);
                     }}
-                    className="accent-[#0366d6]"
+                    className="accent-amber-900"
                   />
                 </td>
                 {/* Icône */}

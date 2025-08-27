@@ -65,7 +65,7 @@ export default function Documents({ user }) {
           />
         </div>
         <button
-          className="flex items-center gap-1 bg-[#e5f1fb] text-[#0366d6] px-3 py-1 rounded shadow-sm font-semibold hover:bg-[#cce6fa] transition self-end"
+          className="flex items-center gap-1 bg-[#e5f1fb] text-amber-900 px-3 py-1 rounded shadow-sm font-semibold hover:bg-[#cce6fa] transition self-end"
           onClick={() => setFolderModal(true)}
         >
           <Plus size={18} /> Créer un dossier
@@ -74,7 +74,7 @@ export default function Documents({ user }) {
       {/* Command bar */}
       <div className="flex gap-2 mb-2">
         <button
-          className="px-4 py-1 rounded bg-[#0366d6] text-white font-semibold hover:bg-blue-700 transition"
+          className="px-4 py-1 rounded bg-amber-900 text-white font-semibold hover:bg-blue-700 transition"
           onClick={() => setUploadModal(true)}
         >
           Ajouter un/des fichier(s)
@@ -84,7 +84,7 @@ export default function Documents({ user }) {
       <div
         ref={dropRef}
         className={`relative rounded-xl border border-gray-200 bg-white transition shadow
-          ${dragActive ? "ring-4 ring-[#0366d6]/40 bg-[#e5f1fb]" : ""}
+          ${dragActive ? "ring-4 ring-amber-900/40 bg-[#e5f1fb]" : ""}
         `}
         onDragOver={(e) => {
           e.preventDefault();
@@ -104,7 +104,7 @@ export default function Documents({ user }) {
         />
         {dragActive && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-[#0366d6] font-bold text-lg bg-white/80 px-5 py-4 rounded-xl border-2 border-dashed border-[#0366d6] shadow">
+            <div className="text-amber-900 font-bold text-lg bg-white/80 px-5 py-4 rounded-xl border-2 border-dashed border-amber-900 shadow">
               Glissez-déposez des fichiers ici
             </div>
           </div>
