@@ -758,7 +758,7 @@ export default function SharePointTable({
         size="xl"
         bodyClassName="p-0"
       >
-        <div className="w-full bg-gray-200">
+        <div className="w-full">
           <div className="w-full max-w-3xl mx-auto p-4">
             <div className="w-full h-[60vh] md:h-[70vh] border rounded-lg bg-white overflow-hidden">
               <div className="w-full h-full overflow-auto flex items-center justify-center">
