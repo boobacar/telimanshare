@@ -1,11 +1,9 @@
 // src/lib/access.js
 
 // --- CONFIG ADMIN(S) -------------------------------------------------
-export const ADMIN_EMAILS = [
-  "boubsfal@gmail.com",
-  "mlaminefall@aol.com",
-  "coordination@telimanlogistique.com",
-].map((e) => e.toLowerCase());
+export const ADMIN_EMAILS = ["boubsfal@gmail.com", "mlaminefall@aol.com"].map(
+  (e) => e.toLowerCase()
+);
 
 // --- UTILS -----------------------------------------------------------
 export function parseEmailList(s = "") {
