@@ -1,3 +1,4 @@
+// src/pages/Documents.jsx
 import { useState, useRef } from "react";
 import { supabase } from "../supabase";
 import SharePointBreadcrumb from "../components/SharePointBreadcrumb";
@@ -7,6 +8,8 @@ import Modal from "../components/Modal";
 import { Plus } from "lucide-react";
 
 export default function Documents({ user }) {
+  const me = (user?.email || "").toLowerCase();
+
   const [currentPath, setCurrentPath] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [uploadModal, setUploadModal] = useState(false);
@@ -19,39 +22,46 @@ export default function Documents({ user }) {
     setUploadModal(false);
   }
 
-  // ✅ CREATION DOSSIER FONCTIONNELLE !
-  function handleCreateFolder(name) {
+  // Création dossier + meta privée par défaut
+  async function handleCreateFolder(name) {
     if (!name) {
       setFolderModal(false);
       return;
     }
+
     const folderPath =
       (currentPath ? currentPath + "/" : "") +
       name +
       "/.emptyFolderPlaceholder";
     const blob = new Blob([""], { type: "text/plain" });
 
-    supabase.storage
+    const { error } = await supabase.storage
       .from("files")
-      .upload(folderPath, blob)
-      .then(({ error }) => {
-        if (error) {
-          alert("Erreur création dossier : " + error.message);
-        }
-        setRefresh((r) => r + 1);
-        setFolderModal(false);
-      });
+      .upload(folderPath, blob);
+    if (error) alert("Erreur création dossier : " + error.message);
+
+    // meta dossier (privé, owner = créateur)
+    const folderKey = (currentPath ? currentPath + "/" : "") + name + "/";
+    await supabase.from("documents_meta").upsert(
+      {
+        file_path: folderKey,
+        is_public: false,
+        allowed_emails: [me].filter(Boolean),
+        owner_email: me,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "file_path" }
+    );
+
+    setRefresh((r) => r + 1);
+    setFolderModal(false);
   }
 
-  // Drag & drop sur la table
   function onDrop(e) {
     e.preventDefault();
     setDragActive(false);
     const files = Array.from(e.dataTransfer.files || []);
-    if (files.length > 0) {
-      setUploadModal(true);
-      // Tu peux stocker files dans un état si tu veux pré-remplir FileUpload plus tard
-    }
+    if (files.length > 0) setUploadModal(true); // (optionnel: pré-remplir FileUpload)
   }
 
   return (
@@ -71,6 +81,7 @@ export default function Documents({ user }) {
           <Plus size={18} /> Créer un dossier
         </button>
       </div>
+
       {/* Command bar */}
       <div className="flex gap-2 mb-2">
         <button
@@ -80,12 +91,13 @@ export default function Documents({ user }) {
           Ajouter un/des fichier(s)
         </button>
       </div>
+
       {/* Table drag & drop */}
       <div
         ref={dropRef}
-        className={`relative rounded-xl border border-gray-200 bg-white transition shadow
-          ${dragActive ? "ring-4 ring-amber-900/40 bg-[#e5f1fb]" : ""}
-        `}
+        className={`relative rounded-xl border border-gray-200 bg-white transition shadow ${
+          dragActive ? "ring-4 ring-amber-900/40 bg-[#e5f1fb]" : ""
+        }`}
         onDragOver={(e) => {
           e.preventDefault();
           setDragActive(true);
@@ -117,7 +129,11 @@ export default function Documents({ user }) {
         title="Téléverser un ou plusieurs fichiers"
         onClose={() => setUploadModal(false)}
       >
-        <FileUpload currentPath={currentPath} onUpload={handleUploadSuccess} />
+        <FileUpload
+          user={user}
+          currentPath={currentPath}
+          onUpload={handleUploadSuccess}
+        />
       </Modal>
 
       {/* Modal création dossier */}

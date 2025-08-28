@@ -1,5 +1,6 @@
 import { UserCircle, Menu } from "lucide-react";
 import { auth } from "../firebase";
+import logo from "../assets/logo.png";
 
 export default function SharePointHeader({ user, onMenu }) {
   return (
@@ -9,8 +10,7 @@ export default function SharePointHeader({ user, onMenu }) {
           <Menu size={28} />
         </button>
         <span className="text-3xl font-bold tracking-tight font-[Segoe UI]">
-          <span className="text-amber-900">Teliman</span>
-          <span>Share</span>
+          <img className="h-10" src={logo} alt="" />
         </span>
       </div>
       <div className="flex items-center gap-2">

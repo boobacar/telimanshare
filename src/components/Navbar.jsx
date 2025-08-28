@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { auth } from "../firebase";
+import logo from "../assets/logo.png";
 
 export default function Navbar({ user }) {
   const navigate = useNavigate();
@@ -11,13 +12,8 @@ export default function Navbar({ user }) {
   return (
     <nav className="flex flex-wrap justify-between items-center p-4 bg-green-900 text-white shadow">
       {/* Logo */}
-      <Link
-        to="/"
-        className="text-2xl sm:text-4xl font-pacifico font-bold tracking-wide text-blue-200 drop-shadow"
-        style={{ letterSpacing: "0.04em" }}
-      >
-        <span className="text-amber-900">T</span>
-        <span className="text-white">S</span>
+      <Link to="/" className=" drop-shadow">
+        <img className="h-10" src={logo} alt="" />
       </Link>
 
       <div>
