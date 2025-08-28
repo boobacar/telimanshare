@@ -310,16 +310,14 @@ export default function SharePointTable({
       const newKey = normalizeKey(`${newFolderPath}/`);
       const oldMeta = metaMap[oldKey];
       if (oldMeta) {
-        await supabase
-          .from("documents_meta")
-          .upsert(
-            {
-              ...oldMeta,
-              file_path: newKey,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "file_path" }
-          );
+        await supabase.from("documents_meta").upsert(
+          {
+            ...oldMeta,
+            file_path: newKey,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "file_path" }
+        );
         await supabase.from("documents_meta").delete().eq("file_path", oldKey);
       }
 
@@ -804,18 +802,39 @@ export default function SharePointTable({
                       className="w-full h-full object-contain"
                     />
                   )}
+                {/* OFFICE (Word, Excel, PowerPoint) */}
                 {previewFile &&
-                  (kindFromName(previewFile.name) === "office" ||
-                    kindFromName(previewFile.name) === "other") &&
+                  kindFromName(previewFile.name) === "office" &&
                   previewUrl && (
                     <iframe
                       title={previewFile.name}
                       className="w-full h-full"
-                      src={`https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(
+                      src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(
                         previewUrl
                       )}`}
                     />
                   )}
+
+                {/* AUTRES types */}
+                {previewFile &&
+                  kindFromName(previewFile.name) === "other" &&
+                  previewUrl && (
+                    <div className="flex flex-col items-center justify-center text-gray-500 p-4">
+                      <p>Aperçu indisponible pour ce type de fichier.</p>
+                      <button
+                        className="btn-primary mt-3"
+                        onClick={() =>
+                          forceDownload(
+                            previewFile.fullPath,
+                            previewFile.name.replace(/^\d+_/, "")
+                          )
+                        }
+                      >
+                        Télécharger
+                      </button>
+                    </div>
+                  )}
+
                 {!previewUrl && (
                   <div className="text-gray-400 text-sm">
                     Chargement de l’aperçu…
