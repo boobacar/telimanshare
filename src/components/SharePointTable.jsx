@@ -747,6 +747,193 @@ export default function SharePointTable({
         </table>
       </div>
 
+      {/* ===== LISTE MOBILE ===== */}
+      <ul className="sm:hidden flex flex-col gap-1">
+        {/* Dossiers */}
+        {(Array.isArray(folders) ? folders : []).map((folder) => {
+          const fullPath = currentPath
+            ? `${currentPath}/${folder.name}`
+            : folder.name;
+          const folderKey = normalizeKey(`${fullPath}/`);
+          const readable = canUserRead(
+            getEffectiveMeta(folderKey, metaMap),
+            me
+          );
+          const manageable = canUserManage(
+            getEffectiveMeta(folderKey, metaMap),
+            me
+          );
+
+          return (
+            <li
+              key={`m-folder-${fullPath}`}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white shadow-sm border border-gray-200"
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(fullPath)}
+                onChange={() => toggleSelect({ fullPath })}
+                onClick={(e) => e.stopPropagation()}
+                className="accent-amber-900 mr-1"
+              />
+              <button
+                className={`${readable ? "" : "opacity-50"}`}
+                onClick={() => {
+                  if (!readable) {
+                    showToast("Accès refusé.");
+                    return;
+                  }
+                  onNavigate && onNavigate(fullPath);
+                }}
+              >
+                <FolderIcon size={20} className="text-amber-900" />
+              </button>
+
+              <div
+                className={`flex-1 font-semibold truncate ${
+                  readable ? "cursor-pointer" : "opacity-50"
+                }`}
+                onClick={() => {
+                  if (!readable) {
+                    showToast("Accès refusé.");
+                    return;
+                  }
+                  onNavigate && onNavigate(fullPath);
+                }}
+              >
+                {folder.name}
+              </div>
+
+              <button
+                className={`text-gray-400 hover:text-amber-900 px-1 ${
+                  manageable ? "" : "opacity-40 pointer-events-none"
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openAccessFolder(folder);
+                }}
+                title="Accès"
+              >
+                <Shield size={18} />
+              </button>
+              <button
+                className={`text-gray-400 hover:text-amber-900 px-1 ${
+                  manageable ? "" : "opacity-40 pointer-events-none"
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openRenameFolder(folder);
+                }}
+                title="Renommer"
+              >
+                <Pencil size={18} />
+              </button>
+              <button
+                className={`text-gray-400 hover:text-red-600 px-1 ${
+                  manageable ? "" : "opacity-40 pointer-events-none"
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openDeleteFolder(folder);
+                }}
+                title="Supprimer"
+              >
+                <Trash2 size={18} />
+              </button>
+            </li>
+          );
+        })}
+
+        {/* Fichiers */}
+        {(Array.isArray(visibleFiles) ? visibleFiles : []).map((file) => {
+          const eff = getEffectiveMeta(file.fullPath, metaMap);
+          const manageable = canUserManage(eff, me);
+          return (
+            <li
+              key={`m-file-${file.fullPath}`}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white shadow-sm border border-gray-200"
+              onClick={() => openPreview(file)}
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(file.fullPath)}
+                onChange={() => toggleSelect(file)}
+                onClick={(e) => e.stopPropagation()}
+                className="accent-amber-900 mr-1"
+              />
+              <span>{getFileIcon(file.name)}</span>
+
+              <div className="flex-1 font-semibold truncate">
+                {file.name.replace(/^\d+_/, "")}
+              </div>
+
+              <button
+                className="text-gray-400 hover:text-amber-900 px-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openPreview(file);
+                }}
+                title="Aperçu"
+              >
+                <Eye size={18} />
+              </button>
+              <button
+                className="text-gray-400 hover:text-amber-900 px-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  forceDownload(file.fullPath, file.name.replace(/^\d+_/, ""));
+                }}
+                title="Télécharger"
+              >
+                <Download size={18} />
+              </button>
+              <button
+                className={`text-gray-400 hover:text-amber-900 px-1 ${
+                  manageable ? "" : "opacity-40 pointer-events-none"
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openAccessFile(file);
+                }}
+                title="Accès"
+              >
+                <Shield size={18} />
+              </button>
+              <button
+                className={`text-gray-400 hover:text-amber-900 px-1 ${
+                  manageable ? "" : "opacity-40 pointer-events-none"
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openRename(file);
+                }}
+                title="Renommer"
+              >
+                <Pencil size={18} />
+              </button>
+              <button
+                className={`text-gray-400 hover:text-red-600 px-1 ${
+                  manageable ? "" : "opacity-40 pointer-events-none"
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openDelete(file);
+                }}
+                title="Supprimer"
+              >
+                <Trash2 size={18} />
+              </button>
+            </li>
+          );
+        })}
+
+        {(folders?.length ?? 0) === 0 && (visibleFiles?.length ?? 0) === 0 && (
+          <li className="text-center text-gray-400 py-6">
+            Aucun fichier ni dossier
+          </li>
+        )}
+      </ul>
+
       {/* MODAL APERÇU */}
       <Modal
         open={previewOpen}
