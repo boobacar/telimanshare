@@ -513,7 +513,7 @@ export default function SharePointTable({
       )}
 
       <div className="overflow-x-auto w-full hidden sm:block">
-        <table className="w-full bg-white text-[15px] font-sans min-w-[560px]">
+        <table className="w-full table-fixed min-w-[640px] sm:table-auto">
           <thead className="sticky top-0 bg-[#f3f2f1] text-[#323130] font-semibold border-b border-gray-200 z-10">
             <tr>
               <th className="py-2 px-2 w-9 text-left font-normal">
@@ -748,7 +748,7 @@ export default function SharePointTable({
       </div>
 
       {/* ===== LISTE MOBILE ===== */}
-      <ul className="sm:hidden flex flex-col gap-1">
+      <ul className="sm:hidden flex flex-col gap-1 w-full">
         {/* Dossiers */}
         {(Array.isArray(folders) ? folders : []).map((folder) => {
           const fullPath = currentPath

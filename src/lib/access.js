@@ -5,6 +5,7 @@ export const ADMIN_EMAILS = [
   "boubsfal@gmail.com",
   "mlaminefall@aol.com",
   "coordination@telimanlogistique.com",
+  "finances@telimanlogistique.com",
 ].map((e) => e.toLowerCase());
 
 // --- UTILS -----------------------------------------------------------
