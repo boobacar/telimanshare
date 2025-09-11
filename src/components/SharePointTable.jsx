@@ -1,12 +1,26 @@
 // src/components/SharePointTable.jsx
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../supabase";
+import { useEffect, useState } from "react";
+import { db, storage } from "../firebase";
+import {
+  ref as sRef,
+  listAll,
+  getMetadata,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+
 import Modal from "./Modal";
 import ToastLite from "./ToastLite";
 import Comments from "./Comments";
 
 import {
-  Eye,
   Download,
   Pencil,
   Trash2,
@@ -21,22 +35,90 @@ import {
   Shield,
 } from "lucide-react";
 
-import {
-  forceDownload,
-  getPreviewUrl,
-  kindFromName,
-  createShareLink,
-} from "../lib/supabaseStorage";
+/* ---------- Helpers ---------- */
+function base64url(str) {
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+function normalizeKey(path) {
+  if (!path) return "";
+  return path.endsWith("/") || path.includes(".") ? path : path + "/";
+}
+function kindFromName(name) {
+  if (/\.(jpg|jpeg|png|gif|webp|avif)$/i.test(name)) return "image";
+  if (/\.(mp4|webm|mov|m4v)$/i.test(name)) return "video";
+  if (/\.pdf$/i.test(name)) return "pdf";
+  if (/\.(docx?|xlsx?|pptx?)$/i.test(name)) return "office";
+  return "other";
+}
+function formatSize(s) {
+  if (!s) return "—";
+  s = Number(s);
+  if (s > 1e6) return (s / 1e6).toFixed(2) + " Mo";
+  if (s > 1e3) return (s / 1e3).toFixed(1) + " Ko";
+  return `${s} o`;
+}
+async function isAdminEmail(email) {
+  if (!email) return false;
+  const snap = await getDoc(doc(db, "admins", email.toLowerCase()));
+  return snap.exists();
+}
+async function fetchMeta(path) {
+  const id = base64url(normalizeKey(path));
+  const snap = await getDoc(doc(db, "metas", id));
+  return snap.exists() ? snap.data() : null;
+}
+async function getEffectiveMeta(path, cache) {
+  const exact = normalizeKey(path);
+  if (cache.has(exact)) return cache.get(exact);
 
-import {
-  ADMIN_EMAILS,
-  parseEmailList,
-  canUserRead,
-  canUserManage,
-  getEffectiveMeta,
-  normalizeKey,
-} from "../lib/access";
+  let m = await fetchMeta(exact);
+  if (m) {
+    cache.set(exact, m);
+    return m;
+  }
 
+  const parts = exact.endsWith("/")
+    ? exact.slice(0, -1).split("/")
+    : exact.split("/");
+
+  for (let last = parts.length - 2; last >= 0; last--) {
+    const parent = parts.slice(0, last + 1).join("/") + "/";
+    if (cache.has(parent)) {
+      const mm = cache.get(parent);
+      cache.set(exact, mm);
+      return mm;
+    }
+    const snap = await fetchMeta(parent);
+    if (snap) {
+      cache.set(parent, snap);
+      cache.set(exact, snap);
+      return snap;
+    }
+    cache.set(parent, null);
+  }
+  cache.set(exact, null);
+  return null;
+}
+function canUserRead(meta, me, isAdmin) {
+  if (!meta) return false;
+  if (meta.is_public) return true;
+  if (isAdmin) return true;
+  if (!me) return false;
+  if (meta.owner_email && meta.owner_email.toLowerCase() === me) return true;
+  if (Array.isArray(meta.allowed_emails)) {
+    return meta.allowed_emails.map((e) => e?.toLowerCase?.() || e).includes(me);
+  }
+  return false;
+}
+function canUserManage(meta, me, isAdmin) {
+  // Politique demandée: SEUL l'admin peut gérer
+  return !!isAdmin;
+}
+
+/* ---------- Composant ---------- */
 export default function SharePointTable({
   user,
   currentPath = "",
@@ -48,9 +130,12 @@ export default function SharePointTable({
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
   const [selected, setSelected] = useState([]);
-  const [metaMap, setMetaMap] = useState({}); // { normalized_path: meta }
+  const [loading, setLoading] = useState(false);
 
-  // Modals génériques
+  const [metaCache] = useState(() => new Map());
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // Modals
   const [modalOpen, setModalOpen] = useState(false);
   const [modalType, setModalType] = useState("");
   const [target, setTarget] = useState(null);
@@ -64,14 +149,11 @@ export default function SharePointTable({
   // Partage
   const [shareOpen, setShareOpen] = useState(false);
   const [shareTarget, setShareTarget] = useState(null);
-  const [shareTTL, setShareTTL] = useState(86400);
-  const [shareForceDownload, setShareForceDownload] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
-  const [shareLoading, setShareLoading] = useState(false);
 
-  // Accès (fichier + dossier)
+  // Accès
   const [accessOpen, setAccessOpen] = useState(false);
-  const [accessTarget, setAccessTarget] = useState(null); // { name, fullPath }
+  const [accessTarget, setAccessTarget] = useState(null);
   const [accessPublic, setAccessPublic] = useState(false);
   const [accessEmails, setAccessEmails] = useState("");
   const [accessIsFolder, setAccessIsFolder] = useState(false);
@@ -85,97 +167,82 @@ export default function SharePointTable({
   };
 
   useEffect(() => {
-    fetchFilesAndFolders(); /* eslint-disable-next-line */
-  }, [currentPath, refresh]);
+    let alive = true;
+    (async () => {
+      const admin = await isAdminEmail(me);
+      if (!alive) return;
+      setIsAdmin(admin);
+      await fetchFilesAndFolders(admin);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPath, refresh, me]);
 
-  async function fetchFilesAndFolders() {
-    const { data, error } = await supabase.storage
-      .from("files")
-      .list(currentPath, {
-        limit: 100,
-        sortBy: { column: "name", order: "asc" },
-      });
+  /** =========================================================
+   *  FETCH plus RAPIDE :
+   *  - getMetadata() en PARALLÈLE via Promise.allSettled
+   *  - contrôle des accès en PARALLÈLE sur dossiers & fichiers
+   *  ========================================================= */
+  async function fetchFilesAndFolders(adminFlag) {
+    setLoading(true);
+    setFiles([]);
+    setFolders([]);
+    setSelected([]);
 
-    if (error) {
-      setFiles([]);
-      setFolders([]);
-      setMetaMap({});
-      return;
-    }
+    const prefix = currentPath ? currentPath + "/" : "";
+    const res = await listAll(sRef(storage, "files/" + prefix));
 
-    const nextFolders = data.filter((i) => i.id === null);
-    const fileObjs = data
-      .filter((i) => i.id !== null && i.name !== ".emptyFolderPlaceholder")
-      .map((f) => {
-        const fullPath = currentPath ? `${currentPath}/${f.name}` : f.name;
-        const { data: urlData } = supabase.storage
-          .from("files")
-          .getPublicUrl(fullPath);
+    // Dossiers
+    const nextFolders = res.prefixes.map((p) => ({
+      name: p.name,
+      fullPath: (currentPath ? currentPath + "/" : "") + p.name,
+    }));
+
+    // Fichiers : métadonnées en // (bien plus rapide que await dans une boucle)
+    const metaPromises = res.items
+      .filter((it) => it.name !== ".emptyFolderPlaceholder")
+      .map(async (itemRef) => {
+        const [meta] = await Promise.all([getMetadata(itemRef)]);
+        const fullPathRel = (itemRef.fullPath || "").replace(/^files\//, "");
         return {
-          name: f.name,
-          fullPath,
-          url: urlData.publicUrl,
-          updated_at: f.updated_at,
-          size: f.metadata?.size || null,
-          type: f.metadata?.mimetype || null,
-          owner: f.metadata?.uploader || "—",
+          name: itemRef.name,
+          fullPath: fullPathRel,
+          updated_at: meta.updated || meta.timeCreated,
+          size: meta.size || null,
+          type: meta.contentType || null,
+          owner: meta.customMetadata?.owner_email || "—",
         };
       });
 
-    setFolders(nextFolders);
-    setFiles(fileObjs);
-    setSelected([]);
+    const fileObjs = (await Promise.allSettled(metaPromises))
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => r.value);
 
-    // charge metas fichiers + dossiers
-    const filePaths = fileObjs.map((f) => f.fullPath);
-    const folderPaths = nextFolders.map((d) =>
-      currentPath ? `${currentPath}/${d.name}/` : `${d.name}/`
+    // Contrôles d'accès en //
+    const folderChecks = await Promise.all(
+      nextFolders.map(async (d) => {
+        const eff = await getEffectiveMeta(d.fullPath + "/", metaCache);
+        return canUserRead(eff, me, adminFlag) ? d : null;
+      })
     );
-    const paths = [...filePaths, ...folderPaths];
-    if (paths.length) {
-      const { data: metas } = await supabase
-        .from("documents_meta")
-        .select(
-          "file_path,is_public,allowed_emails,owner_email,display_name,tags,description,updated_at"
-        )
-        .in("file_path", paths);
+    const fileChecks = await Promise.all(
+      fileObjs.map(async (f) => {
+        const eff = await getEffectiveMeta(f.fullPath, metaCache);
+        return canUserRead(eff, me, adminFlag) ? f : null;
+      })
+    );
 
-      const map = {};
-      (metas || []).forEach((m) => {
-        map[normalizeKey(m.file_path)] = m;
-      });
-      setMetaMap(map);
-    } else {
-      setMetaMap({});
-    }
+    setFolders(folderChecks.filter(Boolean));
+    setFiles(fileChecks.filter(Boolean));
+    setLoading(false);
   }
 
-  const visibleFiles = useMemo(
-    () =>
-      files.filter((f) =>
-        canUserRead(getEffectiveMeta(f.fullPath, metaMap), me)
-      ),
-    [files, metaMap, me]
-  );
-
-  function getFileIcon(name) {
-    if (/\.(jpg|jpeg|png|gif|webp|avif)$/i.test(name))
-      return <ImgIcon size={18} />;
-    if (/\.(mp4|webm|mov|m4v)$/i.test(name)) return <Video size={18} />;
-    if (/\.pdf$/i.test(name)) return <FileText size={18} />;
-    return <FileIcon size={18} />;
-  }
-  function formatSize(s) {
-    if (!s) return "—";
-    s = Number(s);
-    if (s > 1e6) return (s / 1e6).toFixed(2) + " Mo";
-    if (s > 1e3) return (s / 1e3).toFixed(1) + " Ko";
-    return `${s} o`;
-  }
-
-  // --------- Aperçu ----------
+  // Aperçu
   async function openPreview(file) {
-    if (!canUserRead(getEffectiveMeta(file.fullPath, metaMap), me)) {
+    const eff = await getEffectiveMeta(file.fullPath, metaCache);
+    if (!canUserRead(eff, me, isAdmin)) {
       showToast("Accès refusé.");
       return;
     }
@@ -183,10 +250,9 @@ export default function SharePointTable({
     setPreviewUrl("");
     setPreviewOpen(true);
     try {
-      const url = await getPreviewUrl(file.fullPath);
+      const url = await getDownloadURL(sRef(storage, "files/" + file.fullPath));
       setPreviewUrl(url);
-    } catch (e) {
-      console.error(e);
+    } catch {
       showToast("Impossible d’ouvrir l’aperçu.");
     }
   }
@@ -196,24 +262,66 @@ export default function SharePointTable({
     setPreviewUrl("");
   }
 
-  // --------- Modals rename/delete ----------
+  // Sélection (admin uniquement)
+  function toggleSelect(item) {
+    if (!isAdmin) return;
+    setSelected((sel) =>
+      sel.includes(item.fullPath)
+        ? sel.filter((f) => f !== item.fullPath)
+        : [...sel, item.fullPath]
+    );
+  }
+  function selectAll() {
+    if (!isAdmin) return;
+    setSelected([
+      ...folders.map((f) =>
+        currentPath ? `${currentPath}/${f.name}` : f.name
+      ),
+      ...files.map((f) => f.fullPath),
+    ]);
+  }
+  function unselectAll() {
+    if (!isAdmin) return;
+    setSelected([]);
+  }
+
+  async function handleDeleteSelected() {
+    if (!isAdmin) return;
+    if (!selected.length) return;
+    if (!window.confirm(`Supprimer ${selected.length} élément(s) ?`)) return;
+    for (const p of selected) {
+      try {
+        await deleteObject(sRef(storage, "files/" + p));
+        await deleteDoc(doc(db, "metas", base64url(normalizeKey(p))));
+      } catch {}
+    }
+    setSelected([]);
+    fetchFilesAndFolders(isAdmin);
+    showToast("Éléments supprimés.");
+  }
+
+  // Gestions protégées (admin only)
   function openRename(file) {
+    if (!isAdmin) return showToast("Réservé aux admins.");
     setModalType("rename");
     setTarget(file);
     setNewName(file.name.replace(/^\d+_/, ""));
     setModalOpen(true);
   }
   function openDelete(file) {
+    if (!isAdmin) return showToast("Réservé aux admins.");
     setModalType("delete");
     setTarget(file);
     setModalOpen(true);
   }
   function openDeleteFolder(folder) {
+    if (!isAdmin) return showToast("Réservé aux admins.");
     setModalType("delete-folder");
     setTarget(folder);
     setModalOpen(true);
   }
   function openRenameFolder(folder) {
+    if (!isAdmin) return showToast("Réservé aux admins.");
     setModalType("rename-folder");
     setTarget(folder);
     setNewName(folder.name);
@@ -226,188 +334,49 @@ export default function SharePointTable({
     setNewName("");
   }
 
-  // --------- Sélection ----------
-  function toggleSelect(item) {
-    setSelected((sel) =>
-      sel.includes(item.fullPath)
-        ? sel.filter((f) => f !== item.fullPath)
-        : [...sel, item.fullPath]
-    );
-  }
-  function selectAll() {
-    setSelected([
-      ...folders.map((f) =>
-        currentPath ? `${currentPath}/${f.name}` : f.name
-      ),
-      ...visibleFiles.map((f) => f.fullPath),
-    ]);
-  }
-  function unselectAll() {
-    setSelected([]);
-  }
-
-  async function handleDeleteSelected() {
-    if (!selected.length) return;
-    if (!window.confirm(`Supprimer ${selected.length} élément(s) ?`)) return;
-    await supabase.storage.from("files").remove(selected);
-    setSelected([]);
-    fetchFilesAndFolders();
-    showToast("Éléments supprimés.");
-  }
-
-  // --------- Renommer / supprimer ----------
-  async function handleRename(e) {
-    e.preventDefault();
-    if (!target || !newName) return;
-
-    if (modalType === "rename") {
-      const ext = target.name.includes(".")
-        ? "." + target.name.split(".").pop()
-        : "";
-      const realNewName = newName.endsWith(ext) ? newName : newName + ext;
-      const newPath = (currentPath ? currentPath + "/" : "") + realNewName;
-
-      const { error: copyError } = await supabase.storage
-        .from("files")
-        .copy(target.fullPath, newPath);
-      if (!copyError) {
-        await supabase.storage.from("files").remove([target.fullPath]);
-        fetchFilesAndFolders();
-        closeModal();
-        showToast("Nom modifié.");
-      }
-    } else if (modalType === "rename-folder") {
-      const oldFolderPath = currentPath
-        ? `${currentPath}/${target.name}`
-        : target.name;
-      const newFolderPath = currentPath ? `${currentPath}/${newName}` : newName;
-
-      const { data, error } = await supabase.storage
-        .from("files")
-        .list(oldFolderPath, { limit: 1000, recursive: true });
-      if (error) return showToast("Erreur de renommage.");
-
-      for (const item of data) {
-        if (item.id !== null) {
-          const oldFilePath = `${oldFolderPath}/${item.name}`;
-          const newFilePath = `${newFolderPath}/${item.name}`;
-          await supabase.storage.from("files").copy(oldFilePath, newFilePath);
-          await supabase.storage.from("files").remove([oldFilePath]);
-        }
-      }
-      await supabase.storage
-        .from("files")
-        .copy(
-          `${oldFolderPath}/.emptyFolderPlaceholder`,
-          `${newFolderPath}/.emptyFolderPlaceholder`
-        );
-      await supabase.storage
-        .from("files")
-        .remove([`${oldFolderPath}/.emptyFolderPlaceholder`]);
-
-      // déplacer meta du dossier si elle existe
-      const oldKey = normalizeKey(`${oldFolderPath}/`);
-      const newKey = normalizeKey(`${newFolderPath}/`);
-      const oldMeta = metaMap[oldKey];
-      if (oldMeta) {
-        await supabase.from("documents_meta").upsert(
-          {
-            ...oldMeta,
-            file_path: newKey,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "file_path" }
-        );
-        await supabase.from("documents_meta").delete().eq("file_path", oldKey);
-      }
-
-      fetchFilesAndFolders();
-      closeModal();
-      showToast("Dossier renommé.");
-    }
-  }
-
   async function handleDelete() {
-    if (!target) return;
-    await supabase.storage.from("files").remove([target.fullPath]);
-    await supabase
-      .from("documents_meta")
-      .delete()
-      .eq("file_path", normalizeKey(target.fullPath));
-    fetchFilesAndFolders();
+    if (!isAdmin || !target) return;
+    try {
+      await deleteObject(sRef(storage, "files/" + target.fullPath));
+      await deleteDoc(
+        doc(db, "metas", base64url(normalizeKey(target.fullPath)))
+      );
+    } catch {}
+    fetchFilesAndFolders(isAdmin);
     closeModal();
     showToast("Fichier supprimé.");
   }
 
   async function handleDeleteFolder() {
-    if (!target) return;
+    if (!isAdmin || !target) return;
     const folderPath = currentPath
-      ? `${currentPath}/${target.name}`
-      : target.name;
-
-    const { data, error } = await supabase.storage
-      .from("files")
-      .list(folderPath, { limit: 1000, recursive: true });
-    if (error) return showToast("Erreur de suppression.");
-
-    const filesToDelete = (data || [])
-      .filter((i) => i.id !== null)
-      .map((i) => `${folderPath}/${i.name}`);
-    if (filesToDelete.length)
-      await supabase.storage.from("files").remove(filesToDelete);
-    await supabase.storage
-      .from("files")
-      .remove([`${folderPath}/.emptyFolderPlaceholder`]);
-
-    await supabase
-      .from("documents_meta")
-      .delete()
-      .eq("file_path", normalizeKey(`${folderPath}/`));
-
-    fetchFilesAndFolders();
+      ? `${currentPath}/${target.name}/`
+      : `${target.name}/`;
+    try {
+      await deleteObject(
+        sRef(storage, "files/" + folderPath + ".emptyFolderPlaceholder")
+      );
+    } catch {}
+    try {
+      await deleteDoc(doc(db, "metas", base64url(normalizeKey(folderPath))));
+    } catch {}
+    fetchFilesAndFolders(isAdmin);
     closeModal();
     showToast("Dossier supprimé.");
   }
 
-  // --------- Partage ----------
+  // Partage (admin only)
   function openShare(file) {
-    if (!canUserRead(getEffectiveMeta(file.fullPath, metaMap), me)) {
-      showToast("Accès refusé.");
-      return;
-    }
+    if (!isAdmin) return showToast("Réservé aux admins.");
     setShareTarget(file);
-    setShareTTL(86400);
-    setShareForceDownload(false);
     setShareUrl("");
     setShareOpen(true);
+    getDownloadURL(sRef(storage, "files/" + file.fullPath)).then(setShareUrl);
   }
   function closeShare() {
     setShareOpen(false);
     setShareTarget(null);
     setShareUrl("");
-  }
-  async function handleGenerateShare() {
-    if (!shareTarget) return;
-    if (!canUserRead(getEffectiveMeta(shareTarget.fullPath, metaMap), me)) {
-      showToast("Accès refusé.");
-      return;
-    }
-    try {
-      setShareLoading(true);
-      const link = await createShareLink(shareTarget.fullPath, {
-        ttlSeconds: Number(shareTTL),
-        forceDownloadName: shareForceDownload
-          ? shareTarget.name.replace(/^\d+_/, "")
-          : undefined,
-      });
-      setShareUrl(link);
-      showToast("Lien généré.");
-    } catch (e) {
-      console.error(e);
-      showToast("Échec de génération du lien.");
-    } finally {
-      setShareLoading(false);
-    }
   }
   async function copyShareUrl() {
     if (!shareUrl) return;
@@ -419,30 +388,32 @@ export default function SharePointTable({
     }
   }
 
-  // --------- Accès (fichier + dossier) ----------
-  function openAccessFile(file) {
-    const eff = getEffectiveMeta(file.fullPath, metaMap) || {};
-    if (!canUserManage(eff, me)) {
-      showToast("Réservé au propriétaire / admin.");
+  // Accès (admin only)
+  async function openAccessFile(file) {
+    if (!isAdmin) return showToast("Réservé aux admins.");
+    const eff = await getEffectiveMeta(file.fullPath, metaCache);
+    if (!canUserManage(eff, me, isAdmin)) {
+      showToast("Réservé aux admins.");
       return;
     }
-    const own = metaMap[normalizeKey(file.fullPath)] || eff || {};
+    const own = eff || {};
     setAccessTarget({ ...file });
     setAccessIsFolder(false);
     setAccessPublic(!!own.is_public);
     setAccessEmails((own.allowed_emails || []).join(", "));
     setAccessOpen(true);
   }
-  function openAccessFolder(folder) {
-    const folderKey = normalizeKey(
-      currentPath ? `${currentPath}/${folder.name}/` : `${folder.name}/`
-    );
-    const eff = getEffectiveMeta(folderKey, metaMap) || {};
-    if (!canUserManage(eff, me)) {
-      showToast("Réservé au propriétaire / admin.");
+  async function openAccessFolder(folder) {
+    if (!isAdmin) return showToast("Réservé aux admins.");
+    const folderKey = currentPath
+      ? `${currentPath}/${folder.name}/`
+      : `${folder.name}/`;
+    const eff = await getEffectiveMeta(folderKey, metaCache);
+    if (!canUserManage(eff, me, isAdmin)) {
+      showToast("Réservé aux admins.");
       return;
     }
-    const own = metaMap[folderKey] || eff || {};
+    const own = eff || {};
     setAccessTarget({ name: folder.name, fullPath: folderKey });
     setAccessIsFolder(true);
     setAccessPublic(!!own.is_public);
@@ -457,30 +428,36 @@ export default function SharePointTable({
     setAccessIsFolder(false);
   }
   async function saveAccess() {
-    if (!accessTarget) return;
+    if (!isAdmin || !accessTarget) return;
+    const path = normalizeKey(accessTarget.fullPath);
+    const metaId = base64url(path);
     const payload = {
-      file_path: normalizeKey(accessTarget.fullPath),
+      file_path: path,
       is_public: accessPublic,
-      allowed_emails: parseEmailList(accessEmails),
-      owner_email:
-        metaMap[normalizeKey(accessTarget.fullPath)]?.owner_email || me,
-      updated_at: new Date().toISOString(),
+      allowed_emails: accessEmails
+        .split(/[,\s]+/)
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean),
+      owner_email: (await getEffectiveMeta(path, metaCache))?.owner_email || me,
+      updated_at: serverTimestamp(),
     };
-    const { data, error } = await supabase
-      .from("documents_meta")
-      .upsert(payload, { onConflict: "file_path" })
-      .select()
-      .single();
-    if (error) {
-      showToast("Erreur enregistrement accès.");
-      return;
-    }
-    setMetaMap((m) => ({ ...m, [payload.file_path]: data || payload }));
+    await setDoc(doc(db, "metas", metaId), payload, { merge: true });
+    metaCache.set(path, payload);
     showToast("Accès mis à jour.");
     closeAccess();
   }
 
-  // ---------- UI ----------
+  async function forceDownload(fullPath, name) {
+    const url = await getDownloadURL(sRef(storage, "files/" + fullPath));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name || fullPath.split("/").pop();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  /* ===================== RENDER ===================== */
   return (
     <>
       <ToastLite
@@ -489,7 +466,8 @@ export default function SharePointTable({
         onClose={() => setToastOpen(false)}
       />
 
-      {selected.length > 0 && (
+      {/* BARRE D’ACTIONS MULTI-SÉLECTION — Admin uniquement */}
+      {isAdmin && selected.length > 0 && (
         <div className="flex items-center gap-4 mb-4 px-4 py-2 bg-white/70 rounded-xl shadow border border-gray-200">
           <span className="text-green-900 font-semibold text-base">
             <span className="bg-blue-50 rounded px-2 py-1">
@@ -512,429 +490,402 @@ export default function SharePointTable({
         </div>
       )}
 
-      <div className="overflow-x-auto w-full hidden sm:block">
-        <table className="w-full table-fixed min-w-[640px] sm:table-auto">
+      {/* ========= TABLE DESKTOP ========= */}
+      <div className="w-full overflow-x-auto hidden sm:block">
+        <table className="w-full bg-white text-[15px] font-sans min-w-[720px] table-fixed">
           <thead className="sticky top-0 bg-[#f3f2f1] text-[#323130] font-semibold border-b border-gray-200 z-10">
             <tr>
               <th className="py-2 px-2 w-9 text-left font-normal">
-                <input
-                  type="checkbox"
-                  checked={
-                    selected.length === folders.length + visibleFiles.length &&
-                    selected.length > 0
-                  }
-                  onChange={(e) =>
-                    e.target.checked ? selectAll() : unselectAll()
-                  }
-                  onClick={(e) => e.stopPropagation()}
-                  className="accent-amber-900"
-                />
+                {isAdmin ? (
+                  <input
+                    type="checkbox"
+                    checked={
+                      selected.length === folders.length + files.length &&
+                      selected.length > 0
+                    }
+                    onChange={(e) =>
+                      e.target.checked ? selectAll() : unselectAll()
+                    }
+                    onClick={(e) => e.stopPropagation()}
+                    className="accent-amber-900"
+                  />
+                ) : (
+                  <span className="inline-block w-4" />
+                )}
               </th>
-              <th className="py-2 px-2 text-left font-normal">Nom</th>
-              <th className="py-2 px-2 text-left font-normal">Modifié</th>
-              <th className="py-2 px-2 text-left font-normal hidden md:table-cell">
-                Modifié par
+              <th className="py-2 px-2 text-left font-normal w-auto">
+                <span className="block truncate">Nom</span>
               </th>
-              <th className="py-2 px-2 text-left font-normal">Taille</th>
-              <th className="py-2 px-2 text-center font-normal"></th>
+              <th className="py-2 px-2 text-left font-normal w-32 whitespace-nowrap">
+                Date
+              </th>
+              <th className="py-2 px-2 text-left font-normal w-40 whitespace-nowrap hidden md:table-cell">
+                Ajouté par
+              </th>
+              <th className="py-2 px-2 text-left font-normal w-24 whitespace-nowrap">
+                Taille
+              </th>
+              <th className="py-2 px-2 text-center font-normal w-28"></th>
             </tr>
           </thead>
 
           <tbody>
-            {(Array.isArray(folders) ? folders : []).map((folder) => {
-              const fullPath = currentPath
-                ? `${currentPath}/${folder.name}`
-                : folder.name;
-              const folderKey = normalizeKey(`${fullPath}/`);
-              const readable = canUserRead(
-                getEffectiveMeta(folderKey, metaMap),
-                me
-              );
-              const manageable = canUserManage(
-                getEffectiveMeta(folderKey, metaMap),
-                me
-              );
+            {loading && (
+              <tr>
+                <td colSpan={6} className="py-10 text-center text-gray-400">
+                  Chargement…
+                </td>
+              </tr>
+            )}
 
-              return (
-                <tr
-                  key={`folder-${fullPath}`}
-                  className="hover:bg-[#e5f1fb] border-b border-gray-100 transition"
-                >
-                  <td className="py-2 px-2">
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(fullPath)}
-                      onChange={() => toggleSelect({ fullPath })}
-                      onClick={(e) => e.stopPropagation()}
-                      className="accent-amber-900"
-                    />
-                  </td>
-                  <td
-                    className={`py-2 px-2 flex items-center gap-2 font-semibold text-[#323130] ${
-                      readable ? "cursor-pointer" : "opacity-50"
-                    }`}
-                    onClick={() => {
-                      if (!readable) {
-                        showToast("Accès refusé.");
-                        return;
-                      }
-                      onNavigate && onNavigate(fullPath);
-                    }}
+            {/* Dossiers */}
+            {!loading &&
+              folders.map((folder) => {
+                const fullPath = currentPath
+                  ? `${currentPath}/${folder.name}`
+                  : folder.name;
+                return (
+                  <tr
+                    key={`folder-${fullPath}`}
+                    className="hover:bg-[#e5f1fb] border-b border-gray-100 transition"
                   >
-                    <FolderIcon size={18} className="text-amber-900" />
-                    <span>{folder.name}</span>
-                  </td>
-                  <td className="py-2 px-2 text-[#605e5c] text-sm">
-                    {folder.updated_at
-                      ? new Date(folder.updated_at).toLocaleDateString()
-                      : "—"}
-                  </td>
-                  <td className="py-2 px-2 text-[#605e5c] text-sm hidden md:table-cell">
-                    —
-                  </td>
-                  <td className="py-2 px-2 text-[#605e5c] text-sm">—</td>
-                  <td className="py-2 px-2 text-right">
-                    <div className="flex gap-2">
+                    <td className="py-2 px-2 align-middle">
+                      {isAdmin ? (
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(fullPath)}
+                          onChange={() => toggleSelect({ fullPath })}
+                          onClick={(e) => e.stopPropagation()}
+                          className="accent-amber-900"
+                        />
+                      ) : (
+                        <span className="inline-block w-4" />
+                      )}
+                    </td>
+                    <td className="py-2 px-2 align-middle max-w-0">
                       <button
-                        className={`hover:text-amber-900 ${
-                          manageable ? "" : "opacity-40 pointer-events-none"
-                        }`}
-                        title="Accès"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openAccessFolder(folder);
-                        }}
+                        className="flex items-center gap-2 font-semibold text-[#323130] w-full min-w-0"
+                        onClick={() => onNavigate && onNavigate(fullPath)}
+                        title={folder.name}
                       >
-                        <Shield size={17} />
+                        <FolderIcon
+                          size={18}
+                          className="text-amber-900 shrink-0"
+                        />
+                        <span className="truncate">{folder.name}</span>
                       </button>
-                      <button
-                        className={`hover:text-amber-900 ${
-                          manageable ? "" : "opacity-40 pointer-events-none"
-                        }`}
-                        title="Renommer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openRenameFolder(folder);
-                        }}
-                      >
-                        <Pencil size={17} />
-                      </button>
-                      <button
-                        className={`hover:text-red-600 ${
-                          manageable ? "" : "opacity-40 pointer-events-none"
-                        }`}
-                        title="Supprimer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openDeleteFolder(folder);
-                        }}
-                      >
-                        <Trash2 size={17} />
-                      </button>
+                    </td>
+                    <td className="py-2 px-2 text-[#605e5c] text-sm whitespace-nowrap align-middle">
+                      —
+                    </td>
+                    <td className="py-2 px-2 text-[#605e5c] text-sm whitespace-nowrap hidden md:table-cell align-middle">
+                      —
+                    </td>
+                    <td className="py-2 px-2 text-[#605e5c] text-sm whitespace-nowrap align-middle">
+                      —
+                    </td>
+                    <td className="py-2 px-2 text-right align-middle">
+                      {isAdmin ? (
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            className="hover:text-amber-900"
+                            title="Accès"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openAccessFolder(folder);
+                            }}
+                          >
+                            <Shield size={17} />
+                          </button>
+                          {/* Bouton Modifier retiré pour tout le monde */}
+                          <button
+                            className="hover:text-red-600"
+                            title="Supprimer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDeleteFolder(folder);
+                            }}
+                          >
+                            <Trash2 size={17} />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="inline-block w-4" />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+
+            {/* Fichiers */}
+            {!loading &&
+              files.map((file) => {
+                return (
+                  <tr
+                    key={file.fullPath}
+                    className="group hover:bg-[#e5f1fb] border-b border-gray-100 transition"
+                  >
+                    <td className="py-2 px-2 align-middle">
+                      {isAdmin ? (
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(file.fullPath)}
+                          onChange={() => toggleSelect(file)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="accent-amber-900"
+                        />
+                      ) : (
+                        <span className="inline-block w-4" />
+                      )}
+                    </td>
+                    <td className="py-2 px-2 max-w-0 align-middle">
+                      <div className="flex items-center gap-2 font-semibold text-[#323130] w-full min-w-0">
+                        <span className="shrink-0">
+                          {kindFromName(file.name) === "image" ? (
+                            <ImgIcon size={18} />
+                          ) : kindFromName(file.name) === "video" ? (
+                            <Video size={18} />
+                          ) : kindFromName(file.name) === "pdf" ? (
+                            <FileText size={18} />
+                          ) : (
+                            <FileIcon size={18} />
+                          )}
+                        </span>
+                        <button
+                          className="truncate text-left w-full"
+                          title={file.name}
+                          onClick={() => openPreview(file)}
+                        >
+                          {file.name.replace(/^\d+_/, "")}
+                        </button>
+                      </div>
+                    </td>
+                    <td className="py-2 px-2 text-[#605e5c] text-sm whitespace-nowrap align-middle">
+                      {file.updated_at
+                        ? new Date(file.updated_at).toLocaleDateString()
+                        : "—"}
+                    </td>
+                    <td className="py-2 px-2 text-[#605e5c] text-sm whitespace-nowrap hidden md:table-cell align-middle">
+                      {file.owner}
+                    </td>
+                    <td className="py-2 px-2 text-[#605e5c] text-sm whitespace-nowrap align-middle">
+                      {formatSize(file.size)}
+                    </td>
+                    <td className="py-2 px-2 align-middle">
+                      <div className="flex gap-2 justify-end opacity-0 group-hover:opacity-100 transition">
+                        {/* Bouton Aperçu retiré (clic sur le nom = aperçu) */}
+
+                        <button
+                          className="hover:text-amber-900"
+                          title="Télécharger"
+                          onClick={() =>
+                            forceDownload(
+                              file.fullPath,
+                              file.name.replace(/^\d+_/, "")
+                            )
+                          }
+                        >
+                          <Download size={17} />
+                        </button>
+
+                        {/* Boutons admin uniquement — pas de bouton Modifier */}
+                        {isAdmin && (
+                          <>
+                            <button
+                              className="hover:text-amber-900"
+                              title="Partager"
+                              onClick={() => openShare(file)}
+                            >
+                              <Share2 size={17} />
+                            </button>
+                            <button
+                              className="hover:text-amber-900"
+                              title="Accès"
+                              onClick={() => openAccessFile(file)}
+                            >
+                              <Shield size={17} />
+                            </button>
+                            <button
+                              className="hover:text-red-600"
+                              title="Supprimer"
+                              onClick={() => openDelete(file)}
+                            >
+                              <Trash2 size={17} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+            {/* Vide */}
+            {!loading && folders.length === 0 && files.length === 0 && (
+              <tr>
+                <td colSpan={6} className="py-16">
+                  <div className="flex flex-col items-center justify-center text-gray-500">
+                    <div className="text-lg font-semibold">
+                      Aucun dossier ou fichier
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-
-            {(Array.isArray(visibleFiles) ? visibleFiles : []).map((file) => {
-              const eff = getEffectiveMeta(file.fullPath, metaMap);
-              const manageable = canUserManage(eff, me);
-
-              return (
-                <tr
-                  key={file.fullPath}
-                  className="group hover:bg-[#e5f1fb] border-b border-gray-100 transition cursor-pointer"
-                  onClick={() => openPreview(file)}
-                >
-                  <td className="py-2 px-2">
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(file.fullPath)}
-                      onChange={() => toggleSelect(file)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="accent-amber-900"
-                    />
-                  </td>
-                  <td className="py-2 px-2 flex items-center gap-2 font-semibold text-[#323130]">
-                    <span>{getFileIcon(file.name)}</span>
-                    <span>{file.name.replace(/^\d+_/, "")}</span>
-                  </td>
-                  <td className="py-2 px-2 text-[#605e5c] text-sm">
-                    {file.updated_at
-                      ? new Date(file.updated_at).toLocaleDateString()
-                      : "—"}
-                  </td>
-                  <td className="py-2 px-2 text-[#605e5c] text-sm hidden md:table-cell">
-                    {file.owner}
-                  </td>
-                  <td className="py-2 px-2 text-[#605e5c] text-sm">
-                    {formatSize(file.size)}
-                  </td>
-                  <td className="py-2 px-2 text-right">
-                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                      <button
-                        className="hover:text-amber-900"
-                        title="Aperçu"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openPreview(file);
-                        }}
-                      >
-                        <Download size={17} />
-                      </button>
-                      <button
-                        className="hover:text-amber-900"
-                        title="Partager"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openShare(file);
-                        }}
-                      >
-                        <Share2 size={17} />
-                      </button>
-                      <button
-                        className={`hover:text-amber-900 ${
-                          manageable ? "" : "opacity-40 pointer-events-none"
-                        }`}
-                        title="Accès"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openAccessFile(file);
-                        }}
-                      >
-                        <Shield size={17} />
-                      </button>
-                      <button
-                        className={`hover:text-amber-900 ${
-                          manageable ? "" : "opacity-40 pointer-events-none"
-                        }`}
-                        title="Renommer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openRename(file);
-                        }}
-                      >
-                        <Pencil size={17} />
-                      </button>
-                      <button
-                        className={`hover:text-red-600 ${
-                          manageable ? "" : "opacity-40 pointer-events-none"
-                        }`}
-                        title="Supprimer"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openDelete(file);
-                        }}
-                      >
-                        <Trash2 size={17} />
-                      </button>
+                    <div className="text-sm">
+                      Ajoutez des éléments avec “Ajouter un/des fichier(s)” ou
+                      “Créer un dossier”.
                     </div>
-                  </td>
-                </tr>
-              );
-            })}
-
-            {(folders?.length ?? 0) === 0 &&
-              (visibleFiles?.length ?? 0) === 0 && (
-                <tr>
-                  <td colSpan={7} className="text-center text-gray-400 py-8">
-                    Aucun fichier ni dossier
-                  </td>
-                </tr>
-              )}
+                  </div>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* ===== LISTE MOBILE ===== */}
-      <ul className="sm:hidden flex flex-col gap-1 w-full">
-        {/* Dossiers */}
-        {(Array.isArray(folders) ? folders : []).map((folder) => {
-          const fullPath = currentPath
-            ? `${currentPath}/${folder.name}`
-            : folder.name;
-          const folderKey = normalizeKey(`${fullPath}/`);
-          const readable = canUserRead(
-            getEffectiveMeta(folderKey, metaMap),
-            me
-          );
-          const manageable = canUserManage(
-            getEffectiveMeta(folderKey, metaMap),
-            me
-          );
+      {/* ========= LISTE MOBILE ========= */}
+      <ul className="sm:hidden flex flex-col gap-2 mt-2">
+        {loading && (
+          <li className="text-center text-gray-400 py-6">Chargement…</li>
+        )}
 
-          return (
-            <li
-              key={`m-folder-${fullPath}`}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white shadow-sm border border-gray-200"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(fullPath)}
-                onChange={() => toggleSelect({ fullPath })}
-                onClick={(e) => e.stopPropagation()}
-                className="accent-amber-900 mr-1"
-              />
-              <button
-                className={`${readable ? "" : "opacity-50"}`}
-                onClick={() => {
-                  if (!readable) {
-                    showToast("Accès refusé.");
-                    return;
+        {!loading &&
+          folders.map((folder) => {
+            const fullPath = currentPath
+              ? `${currentPath}/${folder.name}`
+              : folder.name;
+            return (
+              <li
+                key={"m-" + fullPath}
+                className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white shadow-sm border border-gray-200 min-w-0"
+              >
+                {isAdmin ? (
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(fullPath)}
+                    onChange={() => toggleSelect({ fullPath })}
+                    onClick={(e) => e.stopPropagation()}
+                    className="accent-amber-900 mr-1 shrink-0"
+                  />
+                ) : (
+                  <span className="inline-block w-4" />
+                )}
+
+                <button onClick={() => onNavigate && onNavigate(fullPath)}>
+                  <FolderIcon size={20} className="text-amber-900" />
+                </button>
+                <button
+                  className="flex-1 font-semibold truncate text-left min-w-0"
+                  onClick={() => onNavigate && onNavigate(fullPath)}
+                  title={folder.name}
+                >
+                  {folder.name}
+                </button>
+
+                {isAdmin && (
+                  <>
+                    <button
+                      className="text-gray-400 hover:text-amber-900 px-1 shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openAccessFolder(folder);
+                      }}
+                      title="Accès"
+                    >
+                      <Shield size={18} />
+                    </button>
+                    {/* Modifier retiré */}
+                    <button
+                      className="text-gray-400 hover:text-red-600 px-1 shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDeleteFolder(folder);
+                      }}
+                      title="Supprimer"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </>
+                )}
+              </li>
+            );
+          })}
+
+        {!loading &&
+          files.map((file) => {
+            return (
+              <li
+                key={"m-" + file.fullPath}
+                className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white shadow-sm border border-gray-200 min-w-0"
+              >
+                {isAdmin ? (
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(file.fullPath)}
+                    onChange={() => toggleSelect(file)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="accent-amber-900 mr-1 shrink-0"
+                  />
+                ) : (
+                  <span className="inline-block w-4" />
+                )}
+
+                <span className="shrink-0">
+                  {kindFromName(file.name) === "image" ? (
+                    <ImgIcon size={18} />
+                  ) : kindFromName(file.name) === "video" ? (
+                    <Video size={18} />
+                  ) : kindFromName(file.name) === "pdf" ? (
+                    <FileText size={18} />
+                  ) : (
+                    <FileIcon size={18} />
+                  )}
+                </span>
+                <button
+                  className="flex-1 font-semibold truncate text-left min-w-0"
+                  title={file.name}
+                  onClick={() => openPreview(file)}
+                >
+                  {file.name.replace(/^\d+_/, "")}
+                </button>
+
+                <button
+                  className="text-gray-400 hover:text-amber-900 px-1 shrink-0"
+                  onClick={() =>
+                    forceDownload(file.fullPath, file.name.replace(/^\d+_/, ""))
                   }
-                  onNavigate && onNavigate(fullPath);
-                }}
-              >
-                <FolderIcon size={20} className="text-amber-900" />
-              </button>
+                  title="Télécharger"
+                >
+                  <Download size={18} />
+                </button>
 
-              <div
-                className={`flex-1 font-semibold truncate ${
-                  readable ? "cursor-pointer" : "opacity-50"
-                }`}
-                onClick={() => {
-                  if (!readable) {
-                    showToast("Accès refusé.");
-                    return;
-                  }
-                  onNavigate && onNavigate(fullPath);
-                }}
-              >
-                {folder.name}
-              </div>
+                {isAdmin && (
+                  <>
+                    <button
+                      className="text-gray-400 hover:text-amber-900 px-1 shrink-0"
+                      onClick={() => openShare(file)}
+                      title="Partager"
+                    >
+                      <Share2 size={18} />
+                    </button>
+                    <button
+                      className="text-gray-400 hover:text-amber-900 px-1 shrink-0"
+                      onClick={() => openAccessFile(file)}
+                      title="Accès"
+                    >
+                      <Shield size={18} />
+                    </button>
+                  </>
+                )}
+              </li>
+            );
+          })}
 
-              <button
-                className={`text-gray-400 hover:text-amber-900 px-1 ${
-                  manageable ? "" : "opacity-40 pointer-events-none"
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openAccessFolder(folder);
-                }}
-                title="Accès"
-              >
-                <Shield size={18} />
-              </button>
-              <button
-                className={`text-gray-400 hover:text-amber-900 px-1 ${
-                  manageable ? "" : "opacity-40 pointer-events-none"
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openRenameFolder(folder);
-                }}
-                title="Renommer"
-              >
-                <Pencil size={18} />
-              </button>
-              <button
-                className={`text-gray-400 hover:text-red-600 px-1 ${
-                  manageable ? "" : "opacity-40 pointer-events-none"
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openDeleteFolder(folder);
-                }}
-                title="Supprimer"
-              >
-                <Trash2 size={18} />
-              </button>
-            </li>
-          );
-        })}
-
-        {/* Fichiers */}
-        {(Array.isArray(visibleFiles) ? visibleFiles : []).map((file) => {
-          const eff = getEffectiveMeta(file.fullPath, metaMap);
-          const manageable = canUserManage(eff, me);
-          return (
-            <li
-              key={`m-file-${file.fullPath}`}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white shadow-sm border border-gray-200"
-              onClick={() => openPreview(file)}
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(file.fullPath)}
-                onChange={() => toggleSelect(file)}
-                onClick={(e) => e.stopPropagation()}
-                className="accent-amber-900 mr-1"
-              />
-              <span>{getFileIcon(file.name)}</span>
-
-              <div className="flex-1 font-semibold truncate">
-                {file.name.replace(/^\d+_/, "")}
-              </div>
-
-              <button
-                className="text-gray-400 hover:text-amber-900 px-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openPreview(file);
-                }}
-                title="Aperçu"
-              >
-                <Eye size={18} />
-              </button>
-              <button
-                className="text-gray-400 hover:text-amber-900 px-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  forceDownload(file.fullPath, file.name.replace(/^\d+_/, ""));
-                }}
-                title="Télécharger"
-              >
-                <Download size={18} />
-              </button>
-              <button
-                className={`text-gray-400 hover:text-amber-900 px-1 ${
-                  manageable ? "" : "opacity-40 pointer-events-none"
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openAccessFile(file);
-                }}
-                title="Accès"
-              >
-                <Shield size={18} />
-              </button>
-              <button
-                className={`text-gray-400 hover:text-amber-900 px-1 ${
-                  manageable ? "" : "opacity-40 pointer-events-none"
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openRename(file);
-                }}
-                title="Renommer"
-              >
-                <Pencil size={18} />
-              </button>
-              <button
-                className={`text-gray-400 hover:text-red-600 px-1 ${
-                  manageable ? "" : "opacity-40 pointer-events-none"
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openDelete(file);
-                }}
-                title="Supprimer"
-              >
-                <Trash2 size={18} />
-              </button>
-            </li>
-          );
-        })}
-
-        {(folders?.length ?? 0) === 0 && (visibleFiles?.length ?? 0) === 0 && (
-          <li className="text-center text-gray-400 py-6">
-            Aucun fichier ni dossier
+        {!loading && folders.length === 0 && files.length === 0 && (
+          <li className="text-center text-gray-500 py-10">
+            Aucun dossier ou fichier
           </li>
         )}
       </ul>
 
-      {/* MODAL APERÇU */}
+      {/* ========= MODALS ========= */}
       <Modal
         open={previewOpen}
         title={
@@ -976,7 +927,6 @@ export default function SharePointTable({
                       className="w-full h-full object-contain"
                     />
                   )}
-                {/* OFFICE (Word, Excel, PowerPoint) */}
                 {previewFile &&
                   kindFromName(previewFile.name) === "office" &&
                   previewUrl && (
@@ -988,27 +938,20 @@ export default function SharePointTable({
                       )}`}
                     />
                   )}
-
-                {/* AUTRES types */}
                 {previewFile &&
                   kindFromName(previewFile.name) === "other" &&
                   previewUrl && (
                     <div className="flex flex-col items-center justify-center text-gray-500 p-4">
                       <p>Aperçu indisponible pour ce type de fichier.</p>
-                      <button
+                      <a
                         className="btn-primary mt-3"
-                        onClick={() =>
-                          forceDownload(
-                            previewFile.fullPath,
-                            previewFile.name.replace(/^\d+_/, "")
-                          )
-                        }
+                        href={previewUrl}
+                        download={previewFile.name.replace(/^\d+_/, "")}
                       >
                         Télécharger
-                      </button>
+                      </a>
                     </div>
                   )}
-
                 {!previewUrl && (
                   <div className="text-gray-400 text-sm">
                     Chargement de l’aperçu…
@@ -1017,7 +960,8 @@ export default function SharePointTable({
               </div>
             </div>
 
-            <div className="mt-3 flex gap-2">
+            {/* Actions du modal — non-admin: uniquement Télécharger */}
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
                 className="btn-primary"
                 onClick={() =>
@@ -1029,16 +973,28 @@ export default function SharePointTable({
               >
                 Télécharger
               </button>
-              <button className="btn" onClick={() => openShare(previewFile)}>
-                <Share2 size={16} className="inline mr-1" /> Partager
-              </button>
-              <button
-                className="btn"
-                onClick={() => openAccessFile(previewFile)}
-              >
-                <Shield size={16} className="inline mr-1" /> Accès
-              </button>
+
+              {isAdmin && (
+                <>
+                  <button
+                    className="btn"
+                    onClick={() => openShare(previewFile)}
+                  >
+                    <Share2 size={16} className="inline mr-1" /> Partager
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => openAccessFile(previewFile)}
+                  >
+                    <Shield size={16} className="inline mr-1" /> Accès
+                  </button>
+                </>
+              )}
             </div>
+
+            {previewFile?.fullPath && (
+              <AccessReadOnly blockPath={previewFile.fullPath} />
+            )}
 
             {previewFile?.fullPath && (
               <div className="mt-6">
@@ -1049,7 +1005,7 @@ export default function SharePointTable({
         </div>
       </Modal>
 
-      {/* MODALS RENAME/DELETE */}
+      {/* Renommage désactivé (pas demandé) */}
       <Modal
         open={
           modalOpen && (modalType === "rename" || modalType === "rename-folder")
@@ -1061,25 +1017,34 @@ export default function SharePointTable({
         }
         onClose={closeModal}
       >
-        <form onSubmit={handleRename} className="space-y-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!isAdmin) return showToast("Réservé aux admins.");
+            alert("Renommage non implémenté avec Firebase Storage gratuit.");
+          }}
+          className="space-y-3"
+        >
           <input
             className="input w-full"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             autoFocus
             required
+            disabled={!isAdmin}
           />
           <div className="flex gap-2 justify-end">
             <button type="button" className="btn" onClick={closeModal}>
               Annuler
             </button>
-            <button type="submit" className="btn-primary">
+            <button type="submit" className="btn-primary" disabled={!isAdmin}>
               Renommer
             </button>
           </div>
         </form>
       </Modal>
 
+      {/* Suppressions */}
       <Modal
         open={modalOpen && modalType === "delete"}
         title="Supprimer le fichier"
@@ -1096,6 +1061,7 @@ export default function SharePointTable({
           <button
             className="btn-primary bg-red-600 hover:bg-red-700"
             onClick={handleDelete}
+            disabled={!isAdmin}
           >
             Supprimer
           </button>
@@ -1108,8 +1074,10 @@ export default function SharePointTable({
         onClose={closeModal}
       >
         <div className="mb-3 text-sm">
-          Voulez-vous vraiment supprimer le dossier <b>{target?.name}</b> et
-          tout son contenu ?
+          Voulez-vous vraiment supprimer le dossier <b>{target?.name}</b> ?
+          <div className="text-xs text-gray-500 mt-1">
+            (Supprime d’abord les fichiers qu’il contient.)
+          </div>
         </div>
         <div className="flex gap-2 justify-end">
           <button className="btn" onClick={closeModal}>
@@ -1118,13 +1086,14 @@ export default function SharePointTable({
           <button
             className="btn-primary bg-red-600 hover:bg-red-700"
             onClick={handleDeleteFolder}
+            disabled={!isAdmin}
           >
             Supprimer
           </button>
         </div>
       </Modal>
 
-      {/* MODAL PARTAGE */}
+      {/* Partage */}
       <Modal
         open={shareOpen}
         title={`Partager : ${shareTarget?.name?.replace(/^\d+_/, "") || ""}`}
@@ -1132,36 +1101,7 @@ export default function SharePointTable({
       >
         <div className="space-y-3">
           <div className="text-sm text-gray-700">
-            Générez un lien temporaire. Toute personne avec ce lien pourra{" "}
-            <b>voir</b> et <b>télécharger</b>.
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="text-sm">Durée :</label>
-            <select
-              className="input"
-              value={shareTTL}
-              onChange={(e) => setShareTTL(e.target.value)}
-            >
-              <option value={3600}>1 heure</option>
-              <option value={86400}>24 heures</option>
-              <option value={604800}>7 jours</option>
-              <option value={2592000}>30 jours</option>
-            </select>
-            <label className="flex items-center gap-2 text-sm ml-2">
-              <input
-                type="checkbox"
-                checked={shareForceDownload}
-                onChange={(e) => setShareForceDownload(e.target.checked)}
-              />
-              Forcer le téléchargement
-            </label>
-            <button
-              className="btn-primary ml-auto"
-              onClick={handleGenerateShare}
-              disabled={shareLoading || !shareTarget}
-            >
-              {shareLoading ? "Génération…" : "Générer le lien"}
-            </button>
+            Lien direct de téléchargement (accès soumis à tes règles).
           </div>
           {shareUrl && (
             <div className="flex items-center gap-2">
@@ -1180,7 +1120,7 @@ export default function SharePointTable({
         </div>
       </Modal>
 
-      {/* MODAL ACCÈS */}
+      {/* Accès */}
       <Modal
         open={accessOpen}
         title={`Accès : ${
@@ -1200,6 +1140,7 @@ export default function SharePointTable({
               type="checkbox"
               checked={accessPublic}
               onChange={(e) => setAccessPublic(e.target.checked)}
+              disabled={!isAdmin}
             />
             Rendre {accessIsFolder ? "le dossier" : "le fichier"} <b>public</b>
           </label>
@@ -1212,22 +1153,57 @@ export default function SharePointTable({
               placeholder="alice@ex.com, bob@ex.com"
               value={accessEmails}
               onChange={(e) => setAccessEmails(e.target.value)}
+              disabled={!isAdmin}
             />
-            <div className="text-xs text-gray-500 mt-1">
-              Le propriétaire et les admins (
-              {ADMIN_EMAILS.join(", ") || "aucun défini"}) ont toujours accès.
-            </div>
           </div>
           <div className="flex justify-end gap-2">
             <button className="btn" onClick={closeAccess}>
               Annuler
             </button>
-            <button className="btn-primary" onClick={saveAccess}>
+            <button
+              className="btn-primary"
+              onClick={saveAccess}
+              disabled={!isAdmin}
+            >
               Enregistrer
             </button>
           </div>
         </div>
       </Modal>
     </>
+  );
+}
+
+/* ----- bloc lecture seule des accès (modal aperçu) ----- */
+function AccessReadOnly({ blockPath }) {
+  const [meta, setMeta] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const id = base64url(normalizeKey(blockPath));
+      const snap = await getDoc(doc(db, "metas", id));
+      if (!alive) return;
+      setMeta(snap.exists() ? snap.data() : null);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [blockPath]);
+
+  if (!meta) return null;
+  return (
+    <div className="mt-4 text-sm text-gray-600 bg-gray-50 rounded p-3 border">
+      <div>
+        <b>Visibilité :</b> {meta.is_public ? "Public" : "Privé"}
+      </div>
+      <div>
+        <b>Propriétaire :</b> {meta.owner_email || "—"}
+      </div>
+      <div className="break-words">
+        <b>E-mails autorisés :</b>{" "}
+        {(meta.allowed_emails || []).join(", ") || "—"}
+      </div>
+    </div>
   );
 }
