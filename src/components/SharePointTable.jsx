@@ -996,11 +996,11 @@ export default function SharePointTable({
               <AccessReadOnly blockPath={previewFile.fullPath} />
             )}
 
-            {previewFile?.fullPath && (
+            {/* {previewFile?.fullPath && (
               <div className="mt-6">
                 <Comments filePath={previewFile.fullPath} user={user} />
               </div>
-            )}
+            )} */}
           </div>
         </div>
       </Modal>

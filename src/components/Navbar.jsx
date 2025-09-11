@@ -10,7 +10,7 @@ export default function Navbar({ user }) {
   };
 
   return (
-    <nav className="flex flex-wrap justify-between items-center p-4 bg-green-900 text-white shadow">
+    <nav className="flex flex-wrap justify-between items-center p-4 bg-green-900 text-white shadow z-10">
       {/* Logo */}
       <Link to="/" className=" drop-shadow">
         <img className="h-10" src={logo} alt="" />

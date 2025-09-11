@@ -3,7 +3,7 @@ import { Folder, Users } from "lucide-react";
 
 export default function Dashboard({ user }) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 min-h-[calc(100vh-60px)]">
+    <div className="relative flex flex-col items-center justify-center py-16 min-h-[calc(100vh-60px)]">
       <div className="bg-white border border-gray-200 rounded-2xl shadow p-8 w-full max-w-xl flex flex-col items-center">
         <h1 className="text-3xl font-bold text-amber-900 mb-3">
           Bienvenue sur Teliman Share

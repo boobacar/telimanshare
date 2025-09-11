@@ -2,12 +2,16 @@
 import { useState } from "react";
 import SharePointSidebar from "./SharePointSidebar";
 import SharePointHeader from "./SharePointHeader";
-
+import camions from "../assets/camions.jpeg";
 export default function SharePointLayout({ children, user }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-[#f3f2f1] font-sans flex flex-col">
+      <div
+        className="absolute top-14 inset-0 bg-no-repeat bg-cover bg-center opacity-50"
+        style={{ backgroundImage: `url(${camions})` }}
+      ></div>
       <SharePointHeader user={user} onMenu={() => setSidebarOpen((o) => !o)} />
       <div className="flex flex-1">
         {/* Sidebar */}

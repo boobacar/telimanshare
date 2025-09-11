@@ -77,7 +77,7 @@ export default function Documents({ user }) {
   }
 
   return (
-    <div className="w-full overflow-x-hidden">
+    <div className="relative w-full overflow-x-hidden">
       {/* Barre du haut */}
       <div className="mx-auto max-w-screen-xl px-3 sm:px-4 pt-3 pb-2">
         <div className="flex flex-col sm:flex-row sm:items-center gap-2">
