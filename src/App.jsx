@@ -4,35 +4,76 @@ import {
   Route,
   Navigate,
 } from "react-router-dom";
-import SignIn from "./components/Auth/SignIn";
-import SignUp from "./components/Auth/SignUp";
-import Documents from "./pages/Documents";
-import Dashboard from "./pages/Dashboard";
-import { auth } from "./firebase";
 import { useAuthState } from "react-firebase-hooks/auth";
+import { auth, db } from "./firebase";
+import { useEffect, useState } from "react";
+import { doc, getDoc } from "firebase/firestore";
+
 import Navbar from "./components/Navbar";
 import SharePointLayout from "./components/SharePointLayout";
 import Footer from "./components/Footer";
-// ... (autres imports)
+
+import SignIn from "./components/Auth/SignIn";
+import SignUp from "./components/Auth/SignUp";
+import Pending from "./pages/Pending";
+import Documents from "./pages/Documents";
+import Dashboard from "./pages/Dashboard";
+import Demandes from "./pages/Demandes";
+import AdminRoute from "./components/AdminRoute";
+import useIsAdmin from "./hooks/useIsAdmin";
+
+function ApprovedGuard({ user, children }) {
+  const { isAdmin, loading: loadingAdmin } = useIsAdmin(user);
+  const [approved, setApproved] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (!user) return;
+        const snap = await getDoc(doc(db, "user_profiles", user.uid));
+        const ok = snap.exists() && snap.data()?.approved === true;
+        if (alive) setApproved(ok);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [user]);
+
+  if (loading || loadingAdmin)
+    return <div className="p-6 text-center">Chargement…</div>;
+
+  // Admins passent toujours
+  if (isAdmin) return children;
+
+  // Utilisateur non approuvé -> hors layout
+  if (!approved) return <Navigate to="/pending" replace />;
+
+  return children;
+}
 
 export default function App() {
   const [user, loading] = useAuthState(auth);
-
-  if (loading) return <div>Loading...</div>;
+  if (loading) return <div className="p-6 text-center">Chargement…</div>;
 
   return (
     <Router>
       <Routes>
-        {/* Auth pages : sans layout */}
+        {/* Auth HORS layout */}
         <Route
           path="/signin"
           element={
             !user ? (
               <>
-                <Navbar /> <SignIn />
+                <Navbar />
+                <SignIn />
               </>
             ) : (
-              <Navigate to="/" />
+              <Navigate to="/documents" />
             )
           }
         />
@@ -41,31 +82,51 @@ export default function App() {
           element={
             !user ? (
               <>
-                <Navbar /> <SignUp />
+                <Navbar />
+                <SignUp />
               </>
             ) : (
-              <Navigate to="/" />
+              <Navigate to="/documents" />
+            )
+          }
+        />
+        <Route path="/pending" element={<Pending />} />
+
+        {/* Demandes HORS layout (protégé front admin) */}
+        <Route
+          path="/demandes"
+          element={
+            user ? (
+              <AdminRoute user={user}>
+                <>
+                  <Navbar />
+                  <Demandes />
+                  <Footer />
+                </>
+              </AdminRoute>
+            ) : (
+              <Navigate to="/signin" />
             )
           }
         />
 
-        {/* Toutes les pages SharePoint */}
+        {/* Tout le reste sous layout seulement si admin OU approuvé */}
         <Route
           path="*"
           element={
             user ? (
-              <SharePointLayout user={user}>
-                <Routes>
-                  <Route path="/" element={<Dashboard user={user} />} />
-                  <Route
-                    path="/documents"
-                    element={<Documents user={user} />}
-                  />
-                  {/* Ajoute ici d'autres pages dans le layout */}
-                  {/* ... */}
-                  <Route path="*" element={<Navigate to="/documents" />} />
-                </Routes>
-              </SharePointLayout>
+              <ApprovedGuard user={user}>
+                <SharePointLayout user={user}>
+                  <Routes>
+                    <Route path="/" element={<Dashboard user={user} />} />
+                    <Route
+                      path="/documents"
+                      element={<Documents user={user} />}
+                    />
+                    <Route path="*" element={<Navigate to="/documents" />} />
+                  </Routes>
+                </SharePointLayout>
+              </ApprovedGuard>
             ) : (
               <Navigate to="/signin" />
             )

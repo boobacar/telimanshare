@@ -320,13 +320,7 @@ export default function SharePointTable({
     setTarget(folder);
     setModalOpen(true);
   }
-  function openRenameFolder(folder) {
-    if (!isAdmin) return showToast("Réservé aux admins.");
-    setModalType("rename-folder");
-    setTarget(folder);
-    setNewName(folder.name);
-    setModalOpen(true);
-  }
+
   function closeModal() {
     setModalOpen(false);
     setModalType("");
