@@ -513,7 +513,7 @@ export default function SharePointTable({
               <th className="py-2 px-2 text-left font-normal w-32 whitespace-nowrap">
                 Date
               </th>
-              <th className="py-2 px-2 text-left font-normal w-40 whitespace-nowrap hidden md:table-cell">
+              <th className="py-2 px-2 text-left font-normal w-auto whitespace-nowrap hidden md:table-cell">
                 Ajouté par
               </th>
               <th className="py-2 px-2 text-left font-normal w-24 whitespace-nowrap">
