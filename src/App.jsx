@@ -21,6 +21,7 @@ import Dashboard from "./pages/Dashboard";
 import Demandes from "./pages/Demandes";
 import AdminRoute from "./components/AdminRoute";
 import useIsAdmin from "./hooks/useIsAdmin";
+import SharePointHeader from "./components/SharePointHeader";
 
 function ApprovedGuard({ user, children }) {
   const { isAdmin, loading: loadingAdmin } = useIsAdmin(user);
@@ -99,9 +100,8 @@ export default function App() {
             user ? (
               <AdminRoute user={user}>
                 <>
-                  <Navbar />
+                  <SharePointHeader />
                   <Demandes />
-                  <Footer />
                 </>
               </AdminRoute>
             ) : (

@@ -1,68 +1,70 @@
 // src/components/Navbar.jsx
 import { Link, useNavigate } from "react-router-dom";
 import { auth } from "../firebase";
+import { signOut } from "firebase/auth";
 import logo from "../assets/logo.png";
-import useIsAdmin from "../hooks/useIsAdmin"; // <- ton hook (ou remplace par ta logique)
+import useIsAdmin from "../hooks/useIsAdmin";
 
 export default function Navbar({ user }) {
   const navigate = useNavigate();
-  const { isAdmin } = useIsAdmin(user); // renvoie { isAdmin, loading }
+  const { isAdmin } = useIsAdmin(user);
 
   const handleLogout = async () => {
     try {
-      await auth.signOut();
+      await signOut(auth);
+    } catch (e) {
+      console.error(e);
     } finally {
-      navigate("/signin");
+      navigate("/signin", { replace: true });
     }
   };
 
   return (
-    <nav className="flex flex-wrap justify-between items-center p-4 bg-green-900 text-white shadow z-10">
-      {/* Logo */}
-      <Link to="/" className="drop-shadow">
-        <img className="h-10" src={logo} alt="Teliman Logistique" />
-      </Link>
+    <nav className="w-full bg-green-900 text-white">
+      <div className="max-w-6xl mx-auto px-3 h-14 flex items-center justify-between">
+        <Link to="/" className="flex items-center gap-2">
+          <img src={logo} alt="logo" className="h-7" />
+          <span className="font-semibold hidden sm:inline">TelimanShare</span>
+        </Link>
 
-      {/* Liens / actions */}
-      <div className="flex items-center gap-2">
-        {/* Lien Demandes (admins uniquement) */}
-        {user && isAdmin && (
-          <Link
-            to="/demandes"
-            className="px-3 py-1 rounded bg-amber-800 hover:bg-amber-900 text-white text-xs font-semibold transition"
-          >
-            Demandes
-          </Link>
-        )}
-
-        {user ? (
-          <>
-            <span className="hidden sm:inline text-gray-100 text-sm">
-              {user.email}
-            </span>
-            <button
-              className="ml-1 px-3 py-1 rounded bg-amber-800 hover:bg-amber-900 text-white text-xs font-semibold transition"
-              onClick={handleLogout}
-            >
-              Déconnexion
-            </button>
-          </>
-        ) : (
-          <>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
             <Link
-              to="/signin"
-              className="px-4 py-1 rounded bg-amber-800 hover:bg-amber-900 text-white text-xs font-semibold transition"
+              to="/demandes"
+              className="px-3 py-1 rounded bg-black/20 hover:bg-black/30 text-xs font-semibold"
             >
-              Connexion
+              Demandes
             </Link>
-            <Link
-              to="/signup"
-              className="px-4 py-1 rounded bg-amber-800 hover:bg-amber-900 text-white text-xs font-semibold transition"
-            >
-              Inscription
-            </Link>
-          </>
-        )}
+          )}
+          {user ? (
+            <>
+              <span className="hidden sm:inline text-gray-100 text-sm">
+                {user.email}
+              </span>
+              <button
+                className="ml-1 px-3 py-1 rounded bg-amber-800 hover:bg-amber-900 text-white text-xs font-semibold transition"
+                onClick={handleLogout}
+              >
+                Déconnexion
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                to="/signin"
+                className="px-3 py-1 rounded bg-black/20 hover:bg-black/30 text-xs font-semibold"
+              >
+                Connexion
+              </Link>
+              <Link
+                to="/signup"
+                className="px-4 py-1 rounded bg-amber-800 hover:bg-amber-900 text-white text-xs font-semibold transition"
+              >
+                Inscription
+              </Link>
+            </>
+          )}
+        </div>
       </div>
     </nav>
   );

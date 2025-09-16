@@ -22,7 +22,7 @@ export default function SignIn() {
   return (
     <form
       onSubmit={handleSignIn}
-      className="flex flex-col gap-4 max-w-sm mx-auto p-6"
+      className="flex flex-col gap-4 max-w-sm mx-auto p-6 border rounded-xl my-[30vh]"
     >
       <h2 className="text-2xl text-green-900 font-bold text-center">
         Se Connecter
