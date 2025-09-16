@@ -12,10 +12,11 @@ import {
   getDoc,
   updateDoc,
   serverTimestamp,
+  deleteDoc,
 } from "firebase/firestore";
 import { sendUserApproved } from "../lib/email";
 
-/* ----------------------------- Modal component ---------------------------- */
+/* ----------------------------- Modal (1 bouton) ---------------------------- */
 function Modal({
   open,
   onClose,
@@ -26,41 +27,41 @@ function Modal({
 }) {
   const dialogRef = useRef(null);
 
-  // Couleurs / icône selon type
-  const palette =
-    {
-      info: {
-        ring: "ring-blue-200",
-        bg: "bg-blue-50",
-        text: "text-blue-800",
-        iconBg: "bg-blue-100",
-      },
-      success: {
-        ring: "ring-emerald-200",
-        bg: "bg-emerald-50",
-        text: "text-emerald-800",
-        iconBg: "bg-emerald-100",
-      },
-      warning: {
-        ring: "ring-amber-200",
-        bg: "bg-amber-50",
-        text: "text-amber-900",
-        iconBg: "bg-amber-100",
-      },
-      error: {
-        ring: "ring-rose-200",
-        bg: "bg-rose-50",
-        text: "text-rose-800",
-        iconBg: "bg-rose-100",
-      },
-    }[type] || palette?.info;
+  const palette = {
+    info: {
+      ring: "ring-blue-200",
+      bg: "bg-blue-50",
+      text: "text-blue-800",
+      iconBg: "bg-blue-100",
+    },
+    success: {
+      ring: "ring-emerald-200",
+      bg: "bg-emerald-50",
+      text: "text-emerald-800",
+      iconBg: "bg-emerald-100",
+    },
+    warning: {
+      ring: "ring-amber-200",
+      bg: "bg-amber-50",
+      text: "text-amber-900",
+      iconBg: "bg-amber-100",
+    },
+    error: {
+      ring: "ring-rose-200",
+      bg: "bg-rose-50",
+      text: "text-rose-800",
+      iconBg: "bg-rose-100",
+    },
+  }[type] || {
+    ring: "ring-blue-200",
+    bg: "bg-blue-50",
+    text: "text-blue-800",
+    iconBg: "bg-blue-100",
+  };
 
-  // Close on Escape
   useEffect(() => {
     if (!open) return;
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose?.();
-    };
+    const onKey = (e) => e.key === "Escape" && onClose?.();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
@@ -74,16 +75,13 @@ function Modal({
       aria-modal="true"
       aria-labelledby="modal-title"
     >
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      {/* Dialog */}
       <div
         ref={dialogRef}
         className={`relative w-[92%] max-w-md rounded-2xl shadow-xl ${palette.bg} ring-1 ${palette.ring} p-5`}
       >
         <div className="flex items-start gap-3">
           <div className={`shrink-0 ${palette.iconBg} rounded-full p-2`}>
-            {/* simple icon */}
             {type === "success" && (
               <svg viewBox="0 0 20 20" className="h-5 w-5 text-emerald-600">
                 <path
@@ -129,7 +127,7 @@ function Modal({
             </p>
           </div>
         </div>
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex justify-end">
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-lg bg-white text-gray-700 border hover:bg-gray-50"
@@ -141,8 +139,68 @@ function Modal({
     </div>
   );
 }
-/* --------------------------- End Modal component -------------------------- */
 
+/* -------------------------- ConfirmModal (2 boutons) -------------------------- */
+function ConfirmModal({
+  open,
+  title = "Confirmer l’action",
+  message = "Voulez-vous continuer ?",
+  confirmLabel = "Confirmer",
+  cancelLabel = "Annuler",
+  onCancel,
+  onConfirm,
+}) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") onCancel?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-title"
+    >
+      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
+      <div
+        ref={ref}
+        className="relative w-[92%] max-w-md rounded-2xl shadow-xl bg-white ring-1 ring-gray-200 p-5"
+      >
+        <h2 id="confirm-title" className="text-lg font-semibold text-gray-900">
+          {title}
+        </h2>
+        <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap">
+          {message}
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 rounded-lg bg-white text-gray-700 border hover:bg-gray-50"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------- Page --------------------------------- */
 export default function Demandes() {
   const navigate = useNavigate();
 
@@ -153,16 +211,19 @@ export default function Demandes() {
   const [approvingId, setApprovingId] = useState(null);
   const [error, setError] = useState("");
 
-  // state pour le modal
+  // Modal 1 bouton (info/success/error)
   const [modal, setModal] = useState({
     open: false,
     title: "",
     message: "",
     type: "info",
   });
-
   const openModal = (payload) => setModal({ open: true, ...payload });
   const closeModal = () => setModal((m) => ({ ...m, open: false }));
+
+  // Modal de confirmation (2 boutons)
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState(null);
 
   // Suivi auth + check admin
   useEffect(() => {
@@ -244,16 +305,13 @@ export default function Demandes() {
       setApprovingId(u.uid);
 
       try {
-        // a) Firestore
         const ref = doc(db, "user_profiles", u.uid);
         await updateDoc(ref, { approved: true, approvedAt: serverTimestamp() });
 
-        // b) email utilisateur
         if (u.email) {
           await sendUserApproved(u.email, u.name);
         }
 
-        // c) MAJ UI
         setPendingUsers((prev) => prev.filter((x) => x.uid !== u.uid));
 
         openModal({
@@ -280,6 +338,42 @@ export default function Demandes() {
     },
     [loadPending]
   );
+
+  // Ouverture du modal de confirmation pour refuser
+  const askReject = useCallback((u) => {
+    setConfirmTarget(u || null);
+    setConfirmOpen(true);
+  }, []);
+
+  // Confirmer la suppression
+  const confirmReject = useCallback(async () => {
+    const u = confirmTarget;
+    setConfirmOpen(false);
+    if (!u?.uid) return;
+
+    try {
+      const ref = doc(db, "user_profiles", u.uid);
+      await deleteDoc(ref);
+
+      setPendingUsers((prev) => prev.filter((x) => x.uid !== u.uid));
+
+      openModal({
+        title: "Demande supprimée",
+        message: "La demande a été supprimée.",
+        type: "info",
+      });
+    } catch (err) {
+      console.error(err);
+      openModal({
+        title: "Erreur",
+        message:
+          "Impossible de supprimer demande : " + (err?.message || String(err)),
+        type: "error",
+      });
+    } finally {
+      setConfirmTarget(null);
+    }
+  }, [confirmTarget]);
 
   // Etats d'accès
   if (loading) {
@@ -349,12 +443,12 @@ export default function Demandes() {
                       ? "Validation…"
                       : "Valider l’inscription"}
                   </button>
+
                   <button
-                    onClick={loadPending}
-                    className="px-3 py-1 rounded border hover:bg-gray-50"
-                    title="Actualiser la liste"
+                    onClick={() => askReject(u)}
+                    className="px-3 py-1 rounded bg-rose-600 hover:bg-rose-700 text-white font-semibold"
                   >
-                    Actualiser
+                    Refuser
                   </button>
                 </div>
               </li>
@@ -363,13 +457,32 @@ export default function Demandes() {
         )}
       </div>
 
-      {/* Modal global */}
+      {/* Modal d'information */}
       <Modal
         open={modal.open}
         onClose={closeModal}
         title={modal.title}
         message={modal.message}
         type={modal.type}
+      />
+
+      {/* Modal de confirmation */}
+      <ConfirmModal
+        open={confirmOpen}
+        title="Refuser cette demande ?"
+        message={
+          confirmTarget
+            ? `Vous allez supprimer définitivement la demande de:\n• ${
+                confirmTarget.name || "(Sans nom)"
+              }\n• ${
+                confirmTarget.email || "—"
+              }\n\nCette action est irréversible.`
+            : "Supprimer définitivement cette demande ?"
+        }
+        confirmLabel="Oui, supprimer"
+        cancelLabel="Annuler"
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={confirmReject}
       />
     </div>
   );
