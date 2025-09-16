@@ -14,7 +14,9 @@ export default function SharePointHeader({ user, onMenu }) {
         <button className="md:hidden mr-1" onClick={onMenu} aria-label="Menu">
           <Menu size={28} />
         </button>
-        <img className="h-10" src={logo} alt="Teliman Logistique" />
+        <Link to="/">
+          <img className="h-10" src={logo} alt="Teliman Logistique" />
+        </Link>
       </div>
 
       <div className="flex items-center gap-2">
