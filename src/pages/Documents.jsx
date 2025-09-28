@@ -76,6 +76,13 @@ export default function Documents({ user }) {
     if (files.length > 0) setUploadModal(true);
   }
 
+  function goUp() {
+    if (!currentPath) return;
+    const parts = currentPath.split("/").filter(Boolean);
+    parts.pop();
+    setCurrentPath(parts.join("/"));
+  }
+
   return (
     <div className="relative w-full overflow-x-hidden">
       {/* Barre du haut */}
@@ -87,12 +94,24 @@ export default function Documents({ user }) {
               onNavigate={setCurrentPath}
             />
           </div>
-          <button
-            className="flex items-center gap-1 bg-[#e5f1fb] text-amber-900 px-3 py-2 rounded shadow-sm font-semibold hover:bg-[#cce6fa] transition self-end sm:self-auto"
-            onClick={() => setFolderModal(true)}
-          >
-            <Plus size={18} /> Créer un dossier
-          </button>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            {currentPath && (
+              <button
+                className="flex items-center gap-1 px-3 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 shadow-sm"
+                onClick={goUp}
+                title="Revenir au dossier parent"
+              >
+                <span className="text-lg leading-none">←</span>
+                <span>Retour</span>
+              </button>
+            )}
+            <button
+              className="flex items-center gap-1 bg-[#e5f1fb] text-amber-900 px-3 py-2 rounded shadow-sm font-semibold hover:bg-[#cce6fa] transition self-end sm:self-auto"
+              onClick={() => setFolderModal(true)}
+            >
+              <Plus size={18} /> Créer un dossier
+            </button>
+          </div>
         </div>
 
         <div className="mt-2">

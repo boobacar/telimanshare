@@ -1,0 +1,21 @@
+[
+  {
+    "origin": [
+      "http://localhost:5173",
+      "https://telimanshare.com",
+      "https://www.telimanshare.com",
+      "https://teliman-share.web.app",
+      "https://teliman-share.firebaseapp.com",
+      "https://*.vercel.app"
+    ],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Disposition",
+      "X-Requested-With",
+      "Access-Control-Allow-Origin"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]
+

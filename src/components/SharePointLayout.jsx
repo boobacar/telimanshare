@@ -7,11 +7,12 @@ export default function SharePointLayout({ children, user }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#f3f2f1] font-sans flex flex-col">
+    <div className="relative min-h-screen bg-[#f3f2f1] font-sans flex flex-col">
+      {/* Fond visuel couvrant tout le layout, calé sur sa hauteur */}
       <div
-        className="absolute top-14 inset-0 bg-no-repeat bg-cover bg-center opacity-50"
+        className="pointer-events-none absolute inset-x-0 top-14 bottom-0 bg-no-repeat bg-cover bg-center opacity-50"
         style={{ backgroundImage: `url(${camions})` }}
-      ></div>
+      />
       <SharePointHeader user={user} onMenu={() => setSidebarOpen((o) => !o)} />
       <div className="flex flex-1">
         {/* Sidebar */}

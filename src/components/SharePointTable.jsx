@@ -7,7 +7,9 @@ import {
   getMetadata,
   getDownloadURL,
   deleteObject,
+  getBlob,
 } from "firebase/storage";
+import JSZip from "jszip";
 import {
   doc,
   getDoc,
@@ -53,6 +55,25 @@ function kindFromName(name) {
   if (/\.(docx?|xlsx?|pptx?)$/i.test(name)) return "office";
   return "other";
 }
+  function cleanName(name) {
+    return (name || "").replace(/^\d+_/, "");
+  }
+// Pour sécuriser les téléchargements sans toucher à la config globale,
+// on construit une référence absolue vers le bucket appspot.
+const __BUCKET = (import.meta.env.VITE_FB_STORAGE_BUCKET || "").trim();
+const __ABS_BUCKET = __BUCKET
+  ? __BUCKET.startsWith("gs://")
+    ? __BUCKET
+    : `gs://${__BUCKET}`
+  : "";
+  function absRef(fullPath) {
+  const p = (fullPath || "")
+    .replace(/^\/+/, "")
+    .replace(/^files\//, "");
+  return __ABS_BUCKET
+    ? sRef(storage, `${__ABS_BUCKET}/files/${p}`)
+    : sRef(storage, `files/${p}`);
+}
 function formatSize(s) {
   if (!s) return "—";
   s = Number(s);
@@ -79,6 +100,8 @@ async function getEffectiveMeta(path, cache) {
     cache.set(exact, m);
     return m;
   }
+
+  
 
   const parts = exact.endsWith("/")
     ? exact.slice(0, -1).split("/")
@@ -166,6 +189,109 @@ export default function SharePointTable({
     setToastOpen(true);
   };
 
+  // ZIP progress UI
+  const [zipOpen, setZipOpen] = useState(false);
+  const [zipPct, setZipPct] = useState(0); // 0..100
+  const [zipAdded, setZipAdded] = useState(0);
+  const [zipTotal, setZipTotal] = useState(0);
+  const [zipCurrent, setZipCurrent] = useState("");
+
+  // Liste récursive de tous les fichiers d'un dossier (sous-dossiers inclus).
+  async function listAllFilesRecursive(rootPath) {
+    const acc = [];
+    const start = (rootPath || "").replace(/^\/+|\/+$/g, "");
+    async function walk(prefix) {
+      const res = await listAll(sRef(storage, `files/${prefix}`));
+      for (const itemRef of res.items) {
+        const name = itemRef.name || "";
+        if (name === ".emptyFolderPlaceholder" || name === ".folder") continue;
+        const rel = (itemRef.fullPath || "").replace(/^files\//, "");
+        acc.push(rel);
+      }
+      for (const p of res.prefixes) {
+        const next = `${prefix}/${p.name}`.replace(/\/+$/, "");
+        // eslint-disable-next-line no-await-in-loop
+        await walk(next);
+      }
+    }
+    await walk(start);
+    return acc;
+  }
+
+  // Crée un ZIP à partir d'une liste d'entrées { fullPath, zipPath }.
+  async function buildAndDownloadZip(entries, zipName) {
+    if (!entries || entries.length === 0) return;
+    setZipOpen(true);
+    setZipPct(0);
+    setZipTotal(entries.length);
+    setZipAdded(0);
+    setZipCurrent("");
+
+    const zip = new JSZip();
+    let added = 0;
+    let failed = 0;
+    try {
+      for (const e of entries) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const blob = await getBlob(absRef(e.fullPath));
+          zip.file(e.zipPath, blob);
+          added++;
+          setZipAdded((n) => n + 1);
+          setZipCurrent(e.zipPath);
+        } catch (err) {
+          console.error("zip add failed", e.fullPath, err);
+          failed++;
+        }
+      }
+      if (added === 0) throw new Error("zip_empty");
+
+      const out = await zip.generateAsync(
+        { type: "blob" },
+        (meta) => {
+          if (typeof meta?.percent === "number") {
+            const p = Math.max(0, Math.min(100, Math.round(meta.percent)));
+            setZipPct(p);
+          }
+          if (meta?.currentFile) setZipCurrent(meta.currentFile);
+        }
+      );
+      const url = URL.createObjectURL(out);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = zipName || `telechargements_${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      showToast(
+        `ZIP prêt: ${added} fichier(s)${failed ? `, ${failed} échec(s)` : ""}.`
+      );
+    } finally {
+      // fermer l'UI après un petit délai pour laisser l'utilisateur voir 100%
+      setTimeout(() => setZipOpen(false), 400);
+    }
+  }
+
+  async function downloadFolderAsZip(folderPath, folderName) {
+    const files = await listAllFilesRecursive(folderPath);
+    if (files.length === 0) {
+      showToast("Dossier vide.");
+      return;
+    }
+    const root = folderPath.replace(/\/+$/, "");
+    const base = folderName || root.split("/").pop();
+    const entries = files.map((fp) => {
+      const relInside = fp.slice(root.length + 1); // partie après "folder/"
+      const parts = relInside.split("/");
+      const fname = parts.pop();
+      parts.push(cleanName(fname));
+      const zipPath = `${base}/${parts.join("/")}`;
+      return { fullPath: fp, zipPath };
+    });
+    await buildAndDownloadZip(entries, `${base}.zip`);
+  }
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -204,7 +330,7 @@ export default function SharePointTable({
     const metaPromises = res.items
       .filter((it) => it.name !== ".emptyFolderPlaceholder")
       .map(async (itemRef) => {
-        const [meta] = await Promise.all([getMetadata(itemRef)]);
+        const meta = await getMetadata(itemRef);
         const fullPathRel = (itemRef.fullPath || "").replace(/^files\//, "");
         return {
           name: itemRef.name,
@@ -250,7 +376,7 @@ export default function SharePointTable({
     setPreviewUrl("");
     setPreviewOpen(true);
     try {
-      const url = await getDownloadURL(sRef(storage, "files/" + file.fullPath));
+      const url = await getDownloadURL(absRef(file.fullPath));
       setPreviewUrl(url);
     } catch {
       showToast("Impossible d’ouvrir l’aperçu.");
@@ -298,6 +424,73 @@ export default function SharePointTable({
     setSelected([]);
     fetchFilesAndFolders(isAdmin);
     showToast("Éléments supprimés.");
+  }
+
+  async function handleDownloadSelected() {
+    if (!isAdmin) return;
+    const targets = files.filter((file) => selected.includes(file.fullPath));
+    const selectedFolderObjs = folders.filter((folder) => {
+      const fp = currentPath ? `${currentPath}/${folder.name}` : folder.name;
+      return selected.includes(fp);
+    });
+    if (targets.length === 0) {
+      showToast("Sélectionne au moins un fichier téléchargeable.");
+      return;
+    }
+
+    const totalSelectedItems = targets.length + selectedFolderObjs.length;
+    if (totalSelectedItems === 0) {
+      showToast("Sélection vide.");
+      return;
+    }
+
+    // Si au moins un dossier ou plus d'un élément → ZIP combiné
+    if (selectedFolderObjs.length > 0 || totalSelectedItems > 1) {
+      try {
+        // Construit les entrées à zipper
+        const entries = [];
+        // Fichiers sélectionnés à la racine du zip
+        for (const f of targets) {
+          entries.push({
+            fullPath: f.fullPath,
+            zipPath: cleanName(f.name),
+          });
+        }
+        // Dossiers sélectionnés, avec leur structure interne
+        for (const d of selectedFolderObjs) {
+          const folderPath = currentPath
+            ? `${currentPath}/${d.name}`
+            : d.name;
+          const filesIn = await listAllFilesRecursive(folderPath);
+          const base = d.name;
+          for (const fp of filesIn) {
+            const relInside = fp.slice(folderPath.length + 1);
+            const parts = relInside.split("/");
+            const fname = parts.pop();
+            parts.push(cleanName(fname));
+            const zipPath = `${base}/${parts.join("/")}`;
+            entries.push({ fullPath: fp, zipPath });
+          }
+        }
+        const stamp = new Date()
+          .toISOString()
+          .replace(/[-:]/g, "")
+          .replace(/\..+/, "");
+        await buildAndDownloadZip(entries, `selection_${stamp}.zip`);
+      } catch (e) {
+        console.error("zip selection failed", e);
+        showToast("Création du ZIP impossible.");
+      }
+      return;
+    }
+
+    // Un seul fichier seulement
+    try {
+      await forceDownload(targets[0], cleanName(targets[0].name));
+      showToast("Téléchargement démarré.");
+    } catch {
+      showToast("Téléchargement impossible.");
+    }
   }
 
   // Gestions protégées (admin only)
@@ -441,14 +634,79 @@ export default function SharePointTable({
     closeAccess();
   }
 
-  async function forceDownload(fullPath, name) {
-    const url = await getDownloadURL(sRef(storage, "files/" + fullPath));
+  async function forceDownload(file, requestedName) {
+    const fileName = requestedName || file?.name || "download";
+    try {
+      const raw = await getDownloadURL(absRef(file.fullPath));
+      const url = new URL(raw);
+      const encoded = encodeURIComponent(fileName);
+      url.searchParams.set(
+        "response-content-disposition",
+        `attachment; filename*=UTF-8''${encoded}`
+      );
+
+      // 1) Tentative via <a download> sans target (évite les popups)
+      const a = document.createElement("a");
+      a.href = url.toString();
+      a.download = fileName;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      // 2) Fallback via iframe caché (au cas où le navigateur ignore download)
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.referrerPolicy = "no-referrer";
+      iframe.src = url.toString();
+      document.body.appendChild(iframe);
+      setTimeout(() => {
+        try {
+          document.body.removeChild(iframe);
+        } catch {}
+      }, 3000);
+    } catch (err) {
+      console.error("forceDownload failed", err);
+      showToast("Téléchargement impossible.");
+      throw err;
+    }
+  }
+
+  async function downloadAsZip(targets) {
+    showToast("Préparation du ZIP…");
+    const zip = new JSZip();
+    let added = 0;
+    let failed = 0;
+    for (const f of targets) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const blob = await getBlob(absRef(f.fullPath));
+        zip.file(cleanName(f.name), blob);
+        added++;
+      } catch (e) {
+        console.error("zip item failed", f.fullPath, e);
+        failed++;
+      }
+    }
+    if (added === 0) throw new Error("zip_empty");
+
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(zipBlob);
     const a = document.createElement("a");
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\..+/, "");
     a.href = url;
-    a.download = name || fullPath.split("/").pop();
+    a.download = `telechargements_${stamp}.zip`;
     document.body.appendChild(a);
     a.click();
     a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    showToast(
+      `ZIP prêt: ${added} fichier(s)${failed ? `, ${failed} échec(s)` : ""}.`
+    );
   }
 
   /* ===================== RENDER ===================== */
@@ -460,9 +718,34 @@ export default function SharePointTable({
         onClose={() => setToastOpen(false)}
       />
 
+      <Modal
+        open={zipOpen}
+        title="Préparation du ZIP"
+        onClose={() => {}}
+        size="md"
+      >
+        <div className="space-y-3">
+          <div className="text-sm text-gray-700">
+            Ajout des fichiers… {zipAdded}/{zipTotal}
+          </div>
+          <div className="w-full h-2 bg-gray-200 rounded">
+            <div
+              className="h-2 rounded bg-amber-900 transition-all"
+              style={{ width: `${zipPct}%` }}
+            />
+          </div>
+          <div className="text-xs text-gray-500 truncate">
+            {zipCurrent || ""}
+          </div>
+          <div className="text-xs text-gray-400">
+            Merci de patienter, ne fermez pas cette fenêtre.
+          </div>
+        </div>
+      </Modal>
+
       {/* BARRE D’ACTIONS MULTI-SÉLECTION — Admin uniquement */}
       {isAdmin && selected.length > 0 && (
-        <div className="flex items-center gap-4 mb-4 px-4 py-2 bg-white/70 rounded-xl shadow border border-gray-200">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4 mb-4 px-3 sm:px-4 py-2 bg-white/70 rounded-xl shadow border border-gray-200">
           <span className="text-green-900 font-semibold text-base">
             <span className="bg-blue-50 rounded px-2 py-1">
               {selected.length}
@@ -470,16 +753,28 @@ export default function SharePointTable({
             sélectionné{selected.length > 1 ? "s" : ""}
           </span>
           <button
-            className="flex items-center gap-2 bg-gray-100 text-gray-800 px-4 py-2 rounded-lg shadow-sm font-semibold border border-gray-300 hover:shadow-md active:scale-95"
+            className="flex items-center gap-1 sm:gap-2 bg-gray-100 text-gray-800 px-2 sm:px-4 py-2 rounded-lg shadow-sm sm:font-semibold border border-gray-300 hover:shadow-md active:scale-95"
             onClick={handleDeleteSelected}
+            aria-label="Supprimer la sélection"
           >
-            <Trash2 size={19} className="text-red-500" /> Supprimer
+            <Trash2 size={18} className="text-red-500" />
+            <span className="hidden sm:inline">Supprimer</span>
           </button>
           <button
-            className="ml-1 px-4 py-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 font-medium border border-gray-200 shadow-sm"
-            onClick={unselectAll}
+            className="flex items-center gap-1 sm:gap-2 bg-blue-50 text-blue-800 px-2 sm:px-4 py-2 rounded-lg shadow-sm sm:font-semibold border border-blue-200 hover:bg-blue-100 active:scale-95"
+            onClick={handleDownloadSelected}
+            aria-label="Télécharger la sélection"
           >
-            Tout désélectionner
+            <Download size={18} />
+            <span className="hidden sm:inline">Télécharger</span>
+          </button>
+          <button
+            className="ml-1 px-2 sm:px-4 py-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 sm:font-medium border border-gray-200 shadow-sm"
+            onClick={unselectAll}
+            aria-label="Tout désélectionner"
+          >
+            <span className="hidden sm:inline">Tout désélectionner</span>
+            <span className="sm:hidden">Désélect.</span>
           </button>
         </div>
       )}
@@ -583,6 +878,19 @@ export default function SharePointTable({
                         <div className="flex gap-2 justify-end">
                           <button
                             className="hover:text-amber-900"
+                            title="Télécharger (ZIP)"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const fp = currentPath
+                                ? `${currentPath}/${folder.name}`
+                                : folder.name;
+                              await downloadFolderAsZip(fp, folder.name);
+                            }}
+                          >
+                            <Download size={17} />
+                          </button>
+                          <button
+                            className="hover:text-amber-900"
                             title="Accès"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -673,10 +981,7 @@ export default function SharePointTable({
                           className="hover:text-amber-900"
                           title="Télécharger"
                           onClick={() =>
-                            forceDownload(
-                              file.fullPath,
-                              file.name.replace(/^\d+_/, "")
-                            )
+                            forceDownload(file, file.name.replace(/^\d+_/, ""))
                           }
                         >
                           <Download size={17} />
@@ -777,6 +1082,19 @@ export default function SharePointTable({
                   <>
                     <button
                       className="text-gray-400 hover:text-amber-900 px-1 shrink-0"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const fp = currentPath
+                          ? `${currentPath}/${folder.name}`
+                          : folder.name;
+                        await downloadFolderAsZip(fp, folder.name);
+                      }}
+                      title="Télécharger (ZIP)"
+                    >
+                      <Download size={18} />
+                    </button>
+                    <button
+                      className="text-gray-400 hover:text-amber-900 px-1 shrink-0"
                       onClick={(e) => {
                         e.stopPropagation();
                         openAccessFolder(folder);
@@ -843,7 +1161,7 @@ export default function SharePointTable({
                 <button
                   className="text-gray-400 hover:text-amber-900 px-1 shrink-0"
                   onClick={() =>
-                    forceDownload(file.fullPath, file.name.replace(/^\d+_/, ""))
+                    forceDownload(file, file.name.replace(/^\d+_/, ""))
                   }
                   title="Télécharger"
                 >
@@ -960,7 +1278,7 @@ export default function SharePointTable({
                 className="btn-primary"
                 onClick={() =>
                   forceDownload(
-                    previewFile.fullPath,
+                    previewFile,
                     previewFile.name.replace(/^\d+_/, "")
                   )
                 }
