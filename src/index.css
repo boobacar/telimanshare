@@ -11,3 +11,19 @@
 .font-pacifico {
   font-family: "Pacifico", cursive;
 }
+
+/* Curseur pointeur pour tous les éléments cliquables */
+:is(
+  button:not(:disabled),
+  [role="button"],
+  a[href],
+  .btn,
+  .btn-primary,
+  input[type="checkbox"],
+  input[type="radio"]
+) {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
