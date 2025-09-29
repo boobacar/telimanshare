@@ -24,7 +24,7 @@ export default function SharePointLayout({ children, user }) {
           transition-transform duration-200`}
           style={{ minHeight: "100vh" }}
         >
-          <SharePointSidebar />
+          <SharePointSidebar user={user} />
         </aside>
 
         {/* Overlay mobile */}

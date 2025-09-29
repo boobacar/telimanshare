@@ -1,12 +1,20 @@
 import { NavLink } from "react-router-dom";
-import { Folder, Users, Trash2, Home } from "lucide-react";
+import { Folder, Users, Trash2, Home, ClipboardList, History } from "lucide-react";
+import useIsAdmin from "../hooks/useIsAdmin";
 
-export default function SharePointSidebar() {
+export default function SharePointSidebar({ user }) {
+  const { isAdmin } = useIsAdmin(user);
   const nav = [
     { label: "Accueil", to: "/", icon: <Home size={19} /> },
     { label: "Documents", to: "/documents", icon: <Folder size={19} /> },
     // { label: "Partagés avec moi", to: "/shared", icon: <Users size={19} /> },
-    // { label: "Corbeille", to: "/trash", icon: <Trash2 size={19} /> },
+    ...(isAdmin
+      ? [
+          { label: "Demandes", to: "/demandes", icon: <ClipboardList size={19} /> },
+          { label: "Journal", to: "/logs", icon: <History size={19} /> },
+          { label: "Corbeille", to: "/trash", icon: <Trash2 size={19} /> },
+        ]
+      : []),
   ];
 
   return (

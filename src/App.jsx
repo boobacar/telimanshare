@@ -19,9 +19,12 @@ import Pending from "./pages/Pending";
 import Documents from "./pages/Documents";
 import Dashboard from "./pages/Dashboard";
 import Demandes from "./pages/Demandes";
+import Trash from "./pages/Trash";
+import ActivityLog from "./pages/ActivityLog";
 import AdminRoute from "./components/AdminRoute";
 import useIsAdmin from "./hooks/useIsAdmin";
 import SharePointHeader from "./components/SharePointHeader";
+import { logActivity } from "./lib/activityLog";
 
 function ApprovedGuard({ user, children }) {
   const { isAdmin, loading: loadingAdmin } = useIsAdmin(user);
@@ -59,6 +62,14 @@ function ApprovedGuard({ user, children }) {
 
 export default function App() {
   const [user, loading] = useAuthState(auth);
+  // Log simple connexion côté client
+  useEffect(() => {
+    (async () => {
+      try {
+        if (user) await logActivity(db, user, { action: "login" });
+      } catch {}
+    })();
+  }, [user]);
   if (loading) return <div className="p-6 text-center">Chargement…</div>;
 
   return (
@@ -122,6 +133,22 @@ export default function App() {
                     <Route
                       path="/documents"
                       element={<Documents user={user} />}
+                    />
+                    <Route
+                      path="/trash"
+                      element={
+                        <AdminRoute user={user}>
+                          <Trash />
+                        </AdminRoute>
+                      }
+                    />
+                    <Route
+                      path="/logs"
+                      element={
+                        <AdminRoute user={user}>
+                          <ActivityLog />
+                        </AdminRoute>
+                      }
                     />
                     <Route path="*" element={<Navigate to="/documents" />} />
                   </Routes>

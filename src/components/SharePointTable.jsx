@@ -1,6 +1,6 @@
 // src/components/SharePointTable.jsx
 import { useEffect, useState } from "react";
-import { db, storage } from "../firebase";
+import { auth, db, storage } from "../firebase";
 import {
   ref as sRef,
   listAll,
@@ -21,6 +21,8 @@ import {
 import Modal from "./Modal";
 import ToastLite from "./ToastLite";
 import Comments from "./Comments";
+import { logActivity } from "../lib/activityLog";
+import { softDeleteFile, softDeleteFolder } from "../lib/trash";
 
 import {
   Download,
@@ -267,6 +269,12 @@ export default function SharePointTable({
       showToast(
         `ZIP prêt: ${added} fichier(s)${failed ? `, ${failed} échec(s)` : ""}.`
       );
+      try {
+        await logActivity(db, auth.currentUser, {
+          action: "download_zip",
+          meta: { added, failed, name: a.download },
+        });
+      } catch {}
     } finally {
       // fermer l'UI après un petit délai pour laisser l'utilisateur voir 100%
       setTimeout(() => setZipOpen(false), 400);
@@ -414,16 +422,26 @@ export default function SharePointTable({
   async function handleDeleteSelected() {
     if (!isAdmin) return;
     if (!selected.length) return;
-    if (!window.confirm(`Supprimer ${selected.length} élément(s) ?`)) return;
+    if (!window.confirm(`Déplacer ${selected.length} élément(s) dans la corbeille ?`)) return;
+    const folderSet = new Set(
+      folders.map((f) => (currentPath ? `${currentPath}/${f.name}` : f.name))
+    );
+    let moved = 0;
     for (const p of selected) {
       try {
-        await deleteObject(sRef(storage, "files/" + p));
-        await deleteDoc(doc(db, "metas", base64url(normalizeKey(p))));
-      } catch {}
+        if (folderSet.has(p)) {
+          await softDeleteFolder(storage, p, auth.currentUser?.email);
+          await logActivity(db, auth.currentUser, { action: "trash_folder", target: p });
+        } else {
+          await softDeleteFile(storage, p, auth.currentUser?.email);
+          await logActivity(db, auth.currentUser, { action: "trash_file", target: p });
+        }
+        moved++;
+      } catch (e) {}
     }
     setSelected([]);
     fetchFilesAndFolders(isAdmin);
-    showToast("Éléments supprimés.");
+    showToast(`${moved} élément(s) déplacé(s) dans la corbeille.`);
   }
 
   async function handleDownloadSelected() {
@@ -524,32 +542,32 @@ export default function SharePointTable({
   async function handleDelete() {
     if (!isAdmin || !target) return;
     try {
-      await deleteObject(sRef(storage, "files/" + target.fullPath));
-      await deleteDoc(
-        doc(db, "metas", base64url(normalizeKey(target.fullPath)))
-      );
+      await softDeleteFile(storage, target.fullPath, auth.currentUser?.email);
+      await logActivity(db, auth.currentUser, {
+        action: "trash_file",
+        target: target.fullPath,
+      });
     } catch {}
     fetchFilesAndFolders(isAdmin);
     closeModal();
-    showToast("Fichier supprimé.");
+    showToast("Fichier déplacé dans la corbeille.");
   }
 
   async function handleDeleteFolder() {
     if (!isAdmin || !target) return;
     const folderPath = currentPath
-      ? `${currentPath}/${target.name}/`
-      : `${target.name}/`;
+      ? `${currentPath}/${target.name}`
+      : `${target.name}`;
     try {
-      await deleteObject(
-        sRef(storage, "files/" + folderPath + ".emptyFolderPlaceholder")
-      );
-    } catch {}
-    try {
-      await deleteDoc(doc(db, "metas", base64url(normalizeKey(folderPath))));
+      await softDeleteFolder(storage, folderPath, auth.currentUser?.email);
+      await logActivity(db, auth.currentUser, {
+        action: "trash_folder",
+        target: folderPath,
+      });
     } catch {}
     fetchFilesAndFolders(isAdmin);
     closeModal();
-    showToast("Dossier supprimé.");
+    showToast("Dossier déplacé dans la corbeille.");
   }
 
   // Partage (admin only)
@@ -666,6 +684,12 @@ export default function SharePointTable({
           document.body.removeChild(iframe);
         } catch {}
       }, 3000);
+      try {
+        await logActivity(db, auth.currentUser, {
+          action: "download_file",
+          target: file.fullPath,
+        });
+      } catch {}
     } catch (err) {
       console.error("forceDownload failed", err);
       showToast("Téléchargement impossible.");

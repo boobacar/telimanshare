@@ -20,14 +20,6 @@ export default function SharePointHeader({ user, onMenu }) {
       </div>
 
       <div className="flex items-center gap-2">
-        {user && isAdmin && (
-          <Link
-            to="/demandes"
-            className="px-3 py-1 rounded bg-amber-800 hover:bg-amber-900 text-white text-xs font-semibold transition"
-          >
-            Demandes
-          </Link>
-        )}
         <span className="hidden sm:inline text-sm font-medium">
           {user?.email}
         </span>
