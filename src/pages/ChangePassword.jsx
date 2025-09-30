@@ -6,6 +6,7 @@ import {
   updatePassword,
 } from "firebase/auth";
 import { logActivity } from "../lib/activityLog";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function ChangePassword() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -14,6 +15,9 @@ export default function ChangePassword() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -87,44 +91,86 @@ export default function ChangePassword() {
             <label className="block text-sm font-medium mb-1">
               Mot de passe actuel
             </label>
-            <input
-              type="password"
-              className="w-full p-2 border-2 border-green-800 rounded focus:border-green-900 transition"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
+            <div className="relative">
+              <input
+                type={showCurrent ? "text" : "password"}
+                className="w-full p-2 border-2 border-green-800 rounded focus:border-green-900 transition pr-10"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowCurrent((s) => !s)}
+                className="absolute inset-y-0 right-2 flex items-center text-gray-600 hover:text-gray-800"
+                aria-label={
+                  showCurrent
+                    ? "Masquer le mot de passe"
+                    : "Afficher le mot de passe"
+                }
+              >
+                {showCurrent ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium mb-1">
               Nouveau mot de passe
             </label>
-            <input
-              type="password"
-              className="w-full p-2 border-2 border-green-800 rounded focus:border-green-900 transition"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              autoComplete="new-password"
-              required
-              minLength={6}
-            />
+            <div className="relative">
+              <input
+                type={showNew ? "text" : "password"}
+                className="w-full p-2 border-2 border-green-800 rounded focus:border-green-900 transition pr-10"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+                required
+                minLength={6}
+              />
+              <button
+                type="button"
+                onClick={() => setShowNew((s) => !s)}
+                className="absolute inset-y-0 right-2 flex items-center text-gray-600 hover:text-gray-800"
+                aria-label={
+                  showNew
+                    ? "Masquer le mot de passe"
+                    : "Afficher le mot de passe"
+                }
+              >
+                {showNew ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium mb-1">
               Confirmer le nouveau mot de passe
             </label>
-            <input
-              type="password"
-              className="w-full p-2 border-2 border-green-800 rounded focus:border-green-900 transition"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              autoComplete="new-password"
-              required
-              minLength={6}
-            />
+            <div className="relative">
+              <input
+                type={showConfirm ? "text" : "password"}
+                className="w-full p-2 border-2 border-green-800 rounded focus:border-green-900 transition pr-10"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+                required
+                minLength={6}
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirm((s) => !s)}
+                className="absolute inset-y-0 right-2 flex items-center text-gray-600 hover:text-gray-800"
+                aria-label={
+                  showConfirm
+                    ? "Masquer le mot de passe"
+                    : "Afficher le mot de passe"
+                }
+              >
+                {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           <button
@@ -135,7 +181,13 @@ export default function ChangePassword() {
             {loading ? "Mise à jour…" : "Mettre à jour"}
           </button>
 
-          {error && <div className="text-red-600">{error}</div>}
+          {error && (
+            <div className="text-red-600">
+              {error === "Firebase: Error (auth/invalid-credential)."
+                ? "Mot de passe actuel incorrecte."
+                : error}
+            </div>
+          )}
           {success && <div className="text-green-700">{success}</div>}
         </form>
       </div>

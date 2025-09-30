@@ -11,12 +11,28 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { sendAdminNewSignup } from "../../lib/email";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function SignUp() {
   const navigate = useNavigate();
   const [values, setValues] = useState({ name: "", email: "", password: "" });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
+
+  const EMAILS_KEY = "teliman_saved_emails";
+  const saveEmail = (e) => {
+    const norm = (e || "").trim().toLowerCase();
+    if (!norm) return;
+    try {
+      const raw = localStorage.getItem(EMAILS_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      const next = Array.isArray(arr)
+        ? [norm, ...arr.filter((x) => x !== norm)].slice(0, 8)
+        : [norm];
+      localStorage.setItem(EMAILS_KEY, JSON.stringify(next));
+    } catch {}
+  };
 
   const onChange = (e) => {
     setValues((v) => ({ ...v, [e.target.name]: e.target.value }));
@@ -68,7 +84,10 @@ export default function SignUp() {
         // On laisse passer l'inscription même si la notif échoue
       }
 
-      // 4) Redirection
+      // 4) Mémoriser l'email localement pour les futures connexions
+      saveEmail(email);
+
+      // 5) Redirection
       navigate("/pending", { replace: true });
     } catch (err) {
       console.error(err);
@@ -120,17 +139,27 @@ export default function SignUp() {
           </div>
           <div>
             <label className="block text-sm font-medium">Mot de passe</label>
-            <input
-              type="password"
-              name="password"
-              value={values.password}
-              onChange={onChange}
-              className="mt-1 w-full border rounded px-3 py-2"
-              placeholder="••••••••"
-              autoComplete="new-password"
-              required
-              minLength={6}
-            />
+            <div className="relative mt-1">
+              <input
+                type={showPwd ? "text" : "password"}
+                name="password"
+                value={values.password}
+                onChange={onChange}
+                className="w-full border rounded px-3 py-2 pr-10"
+                placeholder="••••••••"
+                autoComplete="new-password"
+                required
+                minLength={6}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwd((s) => !s)}
+                className="absolute inset-y-0 right-2 flex items-center text-gray-600 hover:text-gray-800"
+                aria-label={showPwd ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+              >
+                {showPwd ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
           <button
