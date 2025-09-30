@@ -100,7 +100,7 @@ export default function Documents({ user }) {
                 className="flex items-center gap-1 px-3 py-2 rounded border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 shadow-sm"
                 onClick={goUp}
                 title="Revenir au dossier parent"
-              >
+              >.
                 <span className="text-lg leading-none">←</span>
                 <span>Retour</span>
               </button>

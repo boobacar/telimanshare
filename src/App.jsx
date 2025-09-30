@@ -21,6 +21,7 @@ import Dashboard from "./pages/Dashboard";
 import Demandes from "./pages/Demandes";
 import Trash from "./pages/Trash";
 import ActivityLog from "./pages/ActivityLog";
+import ChangePassword from "./pages/ChangePassword";
 import AdminRoute from "./components/AdminRoute";
 import useIsAdmin from "./hooks/useIsAdmin";
 import SharePointHeader from "./components/SharePointHeader";
@@ -150,6 +151,7 @@ export default function App() {
                         </AdminRoute>
                       }
                     />
+                    <Route path="/password" element={<ChangePassword />} />
                     <Route path="*" element={<Navigate to="/documents" />} />
                   </Routes>
                 </SharePointLayout>
