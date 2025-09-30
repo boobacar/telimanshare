@@ -119,7 +119,10 @@ export default function Trash() {
                     <button className="btn" onClick={() => restore(it)}>
                       Restaurer
                     </button>
-                    <button className="btn" onClick={() => destroy(it)}>
+                    <button
+                      className="p-1 px-2 m-2 rounded-lg bg-red-400 hover:bg-red-500"
+                      onClick={() => destroy(it)}
+                    >
                       Supprimer
                     </button>
                   </td>

@@ -400,7 +400,7 @@ export default function Demandes() {
 
   // Rendu
   return (
-    <div className="relative bg-white/50 min-h-[88vh] max-w-3xl mx-auto p-4 ">
+    <div className="relative bg-white/50 min-h-[85vh] max-w-3xl mx-auto p-4 ">
       <h1 className="text-2xl font-bold text-amber-900">
         Demandes d’inscription
       </h1>
