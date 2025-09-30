@@ -24,7 +24,6 @@ import ActivityLog from "./pages/ActivityLog";
 import ChangePassword from "./pages/ChangePassword";
 import AdminRoute from "./components/AdminRoute";
 import useIsAdmin from "./hooks/useIsAdmin";
-import SharePointHeader from "./components/SharePointHeader";
 import { logActivity } from "./lib/activityLog";
 
 function ApprovedGuard({ user, children }) {
@@ -105,23 +104,6 @@ export default function App() {
         />
         <Route path="/pending" element={<Pending />} />
 
-        {/* Demandes HORS layout (protégé front admin) */}
-        <Route
-          path="/demandes"
-          element={
-            user ? (
-              <AdminRoute user={user}>
-                <>
-                  <SharePointHeader />
-                  <Demandes />
-                </>
-              </AdminRoute>
-            ) : (
-              <Navigate to="/signin" />
-            )
-          }
-        />
-
         {/* Tout le reste sous layout seulement si admin OU approuvé */}
         <Route
           path="*"
@@ -134,6 +116,14 @@ export default function App() {
                     <Route
                       path="/documents"
                       element={<Documents user={user} />}
+                    />
+                    <Route
+                      path="/demandes"
+                      element={
+                        <AdminRoute user={user}>
+                          <Demandes />
+                        </AdminRoute>
+                      }
                     />
                     <Route
                       path="/trash"
