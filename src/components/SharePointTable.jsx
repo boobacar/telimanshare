@@ -112,6 +112,25 @@ async function getEffectiveMeta(path, cache) {
     return m;
   }
 
+  // Initialiser la liste d'e-mails (tags) quand le modal s'ouvre
+  useEffect(() => {
+    if (!accessOpen) return;
+    const list = (accessEmails || "")
+      .split(/[\s,;]+/)
+      .map((e) => (e || "").trim().toLowerCase())
+      .filter(Boolean);
+    const seen = new Set();
+    const uniq = [];
+    for (const e of list) {
+      if (!seen.has(e)) {
+        uniq.push(e);
+        seen.add(e);
+      }
+    }
+    setAccessEmailList(uniq);
+    setAccessPendingEmail("");
+  }, [accessOpen, accessEmails]);
+
   
 
   const parts = exact.endsWith("/")
@@ -193,6 +212,9 @@ export default function SharePointTable({
   const [accessTarget, setAccessTarget] = useState(null);
   const [accessPublic, setAccessPublic] = useState(false);
   const [accessEmails, setAccessEmails] = useState("");
+  // Gestion type "chips" comme dans Preview.jsx
+  const [accessEmailList, setAccessEmailList] = useState([]);
+  const [accessPendingEmail, setAccessPendingEmail] = useState("");
   const [accessIsFolder, setAccessIsFolder] = useState(false);
 
   // Toast
@@ -742,7 +764,20 @@ export default function SharePointTable({
     setAccessTarget({ ...file });
     setAccessIsFolder(false);
     setAccessPublic(!!own.is_public);
-    setAccessEmails((own.allowed_emails || []).join(", "));
+    const list = (own.allowed_emails || [])
+      .map((e) => (e || "").trim().toLowerCase())
+      .filter(Boolean);
+    const seen = new Set();
+    const uniq = [];
+    for (const e of list) {
+      if (!seen.has(e)) {
+        uniq.push(e);
+        seen.add(e);
+      }
+    }
+    setAccessEmails(uniq.join(", "));
+    setAccessEmailList(uniq);
+    setAccessPendingEmail("");
     setAccessOpen(true);
   }
   async function openAccessFolder(folder) {
@@ -759,13 +794,28 @@ export default function SharePointTable({
     setAccessTarget({ name: folder.name, fullPath: folderKey });
     setAccessIsFolder(true);
     setAccessPublic(!!own.is_public);
-    setAccessEmails((own.allowed_emails || []).join(", "));
+    const list = (own.allowed_emails || [])
+      .map((e) => (e || "").trim().toLowerCase())
+      .filter(Boolean);
+    const seen = new Set();
+    const uniq = [];
+    for (const e of list) {
+      if (!seen.has(e)) {
+        uniq.push(e);
+        seen.add(e);
+      }
+    }
+    setAccessEmails(uniq.join(", "));
+    setAccessEmailList(uniq);
+    setAccessPendingEmail("");
     setAccessOpen(true);
   }
   function closeAccess() {
     setAccessOpen(false);
     setAccessTarget(null);
     setAccessEmails("");
+    setAccessEmailList([]);
+    setAccessPendingEmail("");
     setAccessPublic(false);
     setAccessIsFolder(false);
   }
@@ -773,13 +823,15 @@ export default function SharePointTable({
     if (!isAdmin || !accessTarget) return;
     const path = normalizeKey(accessTarget.fullPath);
     const metaId = base64url(path);
+    const clean = (s) => (s || "").trim().toLowerCase();
+    let base = accessEmailList.map(clean).filter(Boolean);
+    const extra = clean(accessPendingEmail);
+    if (extra && !base.includes(extra)) base = [...base, extra];
+    setAccessEmails(base.join(", "));
     const payload = {
       file_path: path,
       is_public: accessPublic,
-      allowed_emails: accessEmails
-        .split(/[,\s]+/)
-        .map((e) => e.trim().toLowerCase())
-        .filter(Boolean),
+      allowed_emails: base,
       owner_email: (await getEffectiveMeta(path, metaCache))?.owner_email || me,
       updated_at: serverTimestamp(),
     };
@@ -1619,15 +1671,48 @@ export default function SharePointTable({
             Rendre {accessIsFolder ? "le dossier" : "le fichier"} <b>public</b>
           </label>
           <div>
-            <div className="text-sm mb-1">
-              E-mails autorisés (séparés par virgule) :
-            </div>
+            <div className="text-sm text-gray-600 mb-1">E-mails autorisés</div>
+            {accessEmailList.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {accessEmailList.map((e) => (
+                  <span
+                    key={e}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-900/40 text-amber-900 bg-amber-50 text-xs"
+                  >
+                    {e}
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        className="ml-1 text-amber-900/70 hover:text-amber-900"
+                        onClick={() =>
+                          setAccessEmailList((list) => list.filter((x) => x !== e))
+                        }
+                        aria-label={`Retirer ${e}`}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
             <input
               className="input w-full"
-              placeholder="alice@ex.com, bob@ex.com"
-              value={accessEmails}
-              onChange={(e) => setAccessEmails(e.target.value)}
+              value={accessPendingEmail}
+              onChange={(e) => setAccessPendingEmail(e.target.value)}
+              placeholder="Ajouter un e-mail (ex: alice@ex.com)"
               disabled={!isAdmin}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const clean = (s) => (s || "").trim().toLowerCase();
+                  const v = clean(accessPendingEmail);
+                  if (!v) return;
+                  setAccessEmailList((list) =>
+                    list.includes(v) ? list : [...list, v]
+                  );
+                  setAccessPendingEmail("");
+                }
+              }}
             />
           </div>
           <div className="flex justify-end gap-2">
