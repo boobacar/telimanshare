@@ -368,7 +368,7 @@ export default function Preview() {
                       title={name}
                       src={msSrc}
                       className="w-full"
-                      style={{ minHeight: "auto" }}
+                      style={{ minHeight: "75vh" }}
                     />
                   </>
                 ) : (
