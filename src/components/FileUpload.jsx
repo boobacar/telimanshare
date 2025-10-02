@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { auth, db, storage } from "../firebase";
-import { ref as sRef, uploadBytesResumable } from "firebase/storage";
+import { ref as sRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import html2canvas from "html2canvas";
+import * as XLSX from "xlsx";
+import mammoth from "mammoth/mammoth.browser";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { X, UploadCloud } from "lucide-react";
 
@@ -67,7 +70,28 @@ export default function FileUpload({ currentPath = "", onUpload }) {
         const storagePath = "files/" + pathRel;
         const metaId = base64url(normalizeKey(pathRel));
 
+        // Déterminer le content-type correct (important pour les viewers externes)
+        function guessContentType(name, fallback) {
+          const lower = (name || "").toLowerCase();
+          if (/\.pdf$/.test(lower)) return "application/pdf";
+          if (/\.docx?$/.test(lower))
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+          if (/\.xlsx?$/.test(lower))
+            return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+          if (/\.pptx?$/.test(lower))
+            return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+          if (/\.png$/.test(lower)) return "image/png";
+          if (/\.jpe?g$/.test(lower)) return "image/jpeg";
+          if (/\.gif$/.test(lower)) return "image/gif";
+          if (/\.webp$/.test(lower)) return "image/webp";
+          if (/\.mp4$/.test(lower)) return "video/mp4";
+          if (/\.webm$/.test(lower)) return "video/webm";
+          if (/\.mov$/.test(lower)) return "video/quicktime";
+          return fallback || "application/octet-stream";
+        }
+
         const metadata = {
+          contentType: guessContentType(filename, item.file?.type),
           customMetadata: {
             meta_id: metaId,
             owner_email: me || "",
@@ -124,6 +148,22 @@ export default function FileUpload({ currentPath = "", onUpload }) {
                 },
                 { merge: true }
               );
+              // Conversion en PDF (prod) + génération image (fallback dev)
+              try {
+                if (/\.(docx?|xlsx?|pptx?)$/i.test(filename)) {
+                  if (import.meta.env.PROD) {
+                    const publicUrl = await getDownloadURL(sRef(storage, storagePath));
+                    fetch(`/api/preview`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ url: publicUrl, path: pathRel, metaId, name: filename }),
+                    }).catch(() => {});
+                  } else {
+                    // Dev fallback: preview image
+                    await generatePreviewImage(item.file, pathRel, metaId);
+                  }
+                }
+              } catch {}
               setQueue((q) =>
                 q.map((it, i) =>
                   i === idx ? { ...it, state: "done", progress: 100 } : it
@@ -154,6 +194,86 @@ export default function FileUpload({ currentPath = "", onUpload }) {
         onUpload && onUpload();
       }, 300);
     }
+  }
+
+  async function generatePreviewImage(file, pathRel, metaId) {
+    try {
+      const buf = await file.arrayBuffer();
+      const cont = document.createElement("div");
+      cont.style.position = "fixed";
+      cont.style.left = "-10000px";
+      cont.style.top = "0";
+      cont.style.width = "1024px";
+      cont.style.padding = "16px";
+      cont.style.background = "white";
+      document.body.appendChild(cont);
+
+      const lower = (file.name || "").toLowerCase();
+      if (/\.docx?$/.test(lower)) {
+        const result = await mammoth.convertToHtml(
+          { arrayBuffer: buf },
+          {
+            includeDefaultStyleMap: true,
+            convertImage: mammoth.images.inline((element) =>
+              element.read("base64").then((imageBuffer) => {
+                const ct = element.contentType || "image/png";
+                return { src: `data:${ct};base64,${imageBuffer}` };
+              })
+            ),
+          }
+        );
+        cont.innerHTML = `<div style="font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial">${
+          result.value || ""
+        }</div>`;
+      } else if (/\.xlsx?$/.test(lower)) {
+        const wb = XLSX.read(buf, { type: "array" });
+        const name = wb.SheetNames[0];
+        const ws = wb.Sheets[name];
+        const html = XLSX.utils.sheet_to_html(ws, {
+          header: `<h3 style='margin:0 0 8px 0;font:600 18px system-ui'>${
+            name || "Feuille"
+          }</h3>`,
+          footer: "",
+        });
+        cont.innerHTML = html;
+      } else {
+        document.body.removeChild(cont);
+        return;
+      }
+
+      // Attendre que les images, polices soient prêtes
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const imgs = Array.from(cont.querySelectorAll('img'));
+      await Promise.race([
+        Promise.all(
+          imgs.map(
+            (img) =>
+              new Promise((r) => {
+                if (img.complete) return r();
+                img.onload = img.onerror = () => r();
+              })
+          )
+        ),
+        new Promise((r) => setTimeout(r, 1200)),
+      ]);
+      const canvas = await html2canvas(cont, { backgroundColor: "#ffffff", scale: 1.5 });
+      const blob = await new Promise((r) => canvas.toBlob(r, "image/png", 0.92));
+      document.body.removeChild(cont);
+      if (!blob) return;
+
+      const previewPath = `previews/${pathRel}.png`;
+      await uploadBytesResumable(sRef(storage, previewPath), blob, {
+        contentType: "image/png",
+      });
+      await setDoc(
+        doc(db, "metas", metaId),
+        {
+          preview_img_path: previewPath,
+          preview_generated_at: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch {}
   }
 
   function cancelItem(index) {

@@ -2,10 +2,11 @@
 import { useEffect, useState } from "react";
 import { auth, db } from "../firebase";
 import { storage } from "../firebase";
-import { ref as sRef, listAll, getMetadata } from "firebase/storage";
+import { ref as sRef, listAll, getMetadata, deleteObject } from "firebase/storage";
 import { restoreFile, deleteForever } from "../lib/trash";
 import { logActivity } from "../lib/activityLog";
 import ToastLite from "../components/ToastLite";
+import Modal from "../components/Modal";
 
 function formatDate(iso) {
   try {
@@ -19,6 +20,8 @@ export default function Trash() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ open: false, msg: "" });
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [emptying, setEmptying] = useState(false);
 
   const showToast = (msg) => setToast({ open: true, msg });
 
@@ -82,6 +85,35 @@ export default function Trash() {
     }
   }
 
+  async function emptyTrash() {
+    try {
+      setEmptying(true);
+      // Lister récursivement tous les objets sous 'trash'
+      const delRefs = [];
+      async function walk(prefix) {
+        const res = await listAll(sRef(storage, prefix));
+        for (const it of res.items) delRefs.push(it);
+        for (const p of res.prefixes) await walk(p.fullPath);
+      }
+      await walk("trash");
+      // Supprimer tous les objets trouvés
+      for (const r of delRefs) {
+        // eslint-disable-next-line no-await-in-loop
+        await deleteObject(r).catch(() => {});
+      }
+      setItems([]);
+      setToast({ open: true, msg: "Corbeille vidée." });
+      try {
+        await logActivity(db, auth.currentUser, { action: "empty_trash" });
+      } catch {}
+    } catch (e) {
+      setToast({ open: true, msg: "Échec du vidage de la corbeille." });
+    } finally {
+      setEmptying(false);
+      setConfirmOpen(false);
+    }
+  }
+
   return (
     <div className="relative mx-auto max-w-screen-xl px-3 sm:px-4 pt-4 pb-8">
       <ToastLite
@@ -89,7 +121,17 @@ export default function Trash() {
         message={toast.msg}
         onClose={() => setToast({ open: false, msg: "" })}
       />
-      <h1 className="text-xl font-semibold text-amber-900 mb-3">Corbeille</h1>
+      <div className="flex items-center justify-between mb-3">
+        <h1 className="text-xl font-semibold text-amber-900">Corbeille</h1>
+        {items.length > 0 && (
+          <button
+            className="px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700 transition"
+            onClick={() => setConfirmOpen(true)}
+          >
+            Vider la corbeille
+          </button>
+        )}
+      </div>
       {loading && <div className="text-gray-500">Chargement…</div>}
       {!loading && items.length === 0 && (
         <div className="text-gray-500">Aucun élément dans la corbeille.</div>
@@ -132,6 +174,30 @@ export default function Trash() {
           </table>
         </div>
       )}
+      <Modal
+        open={confirmOpen}
+        title="Vider la corbeille"
+        onClose={() => (emptying ? null : setConfirmOpen(false))}
+      >
+        <div className="space-y-3">
+          <p>
+            Cette action supprimera définitivement {items.length} élément(s) de la
+            corbeille. Cette opération est irréversible.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button className="btn" onClick={() => setConfirmOpen(false)} disabled={emptying}>
+              Annuler
+            </button>
+            <button
+              className="px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-700 transition disabled:opacity-60"
+              onClick={emptyTrash}
+              disabled={emptying}
+            >
+              {emptying ? "Vidage…" : "Vider"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

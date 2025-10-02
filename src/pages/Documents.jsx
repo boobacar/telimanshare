@@ -1,5 +1,6 @@
 // src/pages/Documents.jsx
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import Modal from "../components/Modal";
 import SharePointBreadcrumb from "../components/SharePointBreadcrumb";
 import SharePointTable from "../components/SharePointTable";
@@ -18,12 +19,21 @@ function base64url(str) {
 }
 
 export default function Documents({ user }) {
+  const location = useLocation();
   const [currentPath, setCurrentPath] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [uploadModal, setUploadModal] = useState(false);
   const [folderModal, setFolderModal] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const dropRef = useRef(null);
+
+  // Initialiser le chemin depuis la query ?from=...
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const init = params.get("from");
+    if (init != null) setCurrentPath(init);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
 
   function handleUploadSuccess() {
     setRefresh((r) => r + 1);

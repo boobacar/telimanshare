@@ -22,6 +22,7 @@ import Demandes from "./pages/Demandes";
 import Trash from "./pages/Trash";
 import ActivityLog from "./pages/ActivityLog";
 import ChangePassword from "./pages/ChangePassword";
+import Preview from "./pages/Preview";
 import AdminRoute from "./components/AdminRoute";
 import useIsAdmin from "./hooks/useIsAdmin";
 import { logActivity } from "./lib/activityLog";
@@ -141,6 +142,7 @@ export default function App() {
                         </AdminRoute>
                       }
                     />
+                    <Route path="/preview" element={<Preview />} />
                     <Route path="/password" element={<ChangePassword />} />
                     <Route path="*" element={<Navigate to="/documents" />} />
                   </Routes>

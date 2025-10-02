@@ -8,8 +8,13 @@ import {
   getDownloadURL,
   deleteObject,
   getBlob,
+  uploadBytesResumable,
 } from "firebase/storage";
 import JSZip from "jszip";
+import { useNavigate } from "react-router-dom";
+import html2canvas from "html2canvas";
+import * as XLSX from "xlsx";
+import mammoth from "mammoth/mammoth.browser";
 import {
   doc,
   getDoc,
@@ -75,6 +80,10 @@ const __ABS_BUCKET = __BUCKET
   return __ABS_BUCKET
     ? sRef(storage, `${__ABS_BUCKET}/files/${p}`)
     : sRef(storage, `files/${p}`);
+}
+function absPreviewRef(previewPath) {
+  const p = (previewPath || "").replace(/^\/+/, "");
+  return __ABS_BUCKET ? sRef(storage, `${__ABS_BUCKET}/${p}`) : sRef(storage, p);
 }
 function formatSize(s) {
   if (!s) return "—";
@@ -151,6 +160,7 @@ export default function SharePointTable({
   refresh,
 }) {
   const me = (user?.email || "").toLowerCase();
+  const navigate = useNavigate();
 
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
@@ -170,6 +180,8 @@ export default function SharePointTable({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [previewImgUrl, setPreviewImgUrl] = useState("");
+  const [previewPdfUrl, setPreviewPdfUrl] = useState("");
 
   // Partage
   const [shareOpen, setShareOpen] = useState(false);
@@ -382,18 +394,143 @@ export default function SharePointTable({
     }
     setPreviewFile(file);
     setPreviewUrl("");
+    setPreviewImgUrl("");
+    setPreviewPdfUrl("");
     setPreviewOpen(true);
     try {
       const url = await getDownloadURL(absRef(file.fullPath));
       setPreviewUrl(url);
+      // Récupérer la meta à jour (sans cache) pour capturer un preview généré juste après l'upload
+      try {
+        const metaId = base64url(normalizeKey(file.fullPath));
+        const fresh = await getDoc(doc(db, "metas", metaId));
+        const data = fresh.exists() ? fresh.data() : null;
+        if (data?.preview_pdf_path) {
+          const pdfUrl = await getDownloadURL(absPreviewRef(data.preview_pdf_path));
+          setPreviewPdfUrl(pdfUrl);
+        } else if (data?.preview_img_path) {
+          const img = await getDownloadURL(absPreviewRef(data.preview_img_path));
+          setPreviewImgUrl(img);
+        }
+      } catch {}
+      // Si pas de preview enregistré, tenter une génération rapide côté client (fallback)
+      if (kindFromName(file.name) === "office" && !previewPdfUrl && !previewImgUrl) {
+        try {
+          await generateAndUploadPreview(file);
+        } catch {}
+      }
+      // Re-check shortly in case preview finished asynchronously
+      if (!previewPdfUrl && !previewImgUrl) {
+        setTimeout(async () => {
+          try {
+            const metaId = base64url(normalizeKey(file.fullPath));
+            const fresh = await getDoc(doc(db, "metas", metaId));
+            const data = fresh.exists() ? fresh.data() : null;
+            if (data?.preview_pdf_path) {
+              const pdfUrl = await getDownloadURL(absPreviewRef(data.preview_pdf_path));
+              setPreviewPdfUrl(pdfUrl);
+            } else if (data?.preview_img_path) {
+              const img = await getDownloadURL(absPreviewRef(data.preview_img_path));
+              setPreviewImgUrl(img);
+            }
+          } catch {}
+        }, 1500);
+      }
     } catch {
       showToast("Impossible d’ouvrir l’aperçu.");
+    }
+  }
+
+  async function generateAndUploadPreview(file) {
+    try {
+      const blob = await getBlob(absRef(file.fullPath));
+      const arr = await blob.arrayBuffer();
+      const cont = document.createElement("div");
+      cont.style.position = "fixed";
+      cont.style.left = "-10000px";
+      cont.style.top = "0";
+      cont.style.width = "1024px";
+      cont.style.padding = "16px";
+      cont.style.background = "white";
+      document.body.appendChild(cont);
+
+      const lower = (file.name || "").toLowerCase();
+      if (/\.docx?$/.test(lower)) {
+        const res = await mammoth.convertToHtml(
+          { arrayBuffer: arr },
+          {
+            includeDefaultStyleMap: true,
+            convertImage: mammoth.images.inline((element) =>
+              element.read("base64").then((imageBuffer) => {
+                const ct = element.contentType || "image/png";
+                return { src: `data:${ct};base64,${imageBuffer}` };
+              })
+            ),
+          }
+        );
+        cont.innerHTML = `<div style="font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial">${
+          res.value || ""
+        }</div>`;
+      } else if (/\.xlsx?$/.test(lower)) {
+        const wb = XLSX.read(arr, { type: "array" });
+        const name = wb.SheetNames[0];
+        const ws = wb.Sheets[name];
+        const html = XLSX.utils.sheet_to_html(ws, {
+          header: `<h3 style='margin:0 0 8px 0;font:600 18px system-ui'>${name || "Feuille"}</h3>`,
+          footer: "",
+        });
+        cont.innerHTML = html;
+      } else {
+        document.body.removeChild(cont);
+        return;
+      }
+
+      // Attendre les images éventuelles
+      await new Promise((r) => setTimeout(r, 80));
+      const imgs = Array.from(cont.querySelectorAll("img"));
+      await Promise.race([
+        Promise.all(
+          imgs.map(
+            (img) =>
+              new Promise((resolve) => {
+                if (img.complete) return resolve();
+                img.onload = img.onerror = () => resolve();
+              })
+          )
+        ),
+        new Promise((r) => setTimeout(r, 1200)),
+      ]);
+
+      const canvas = await html2canvas(cont, { backgroundColor: "#ffffff", scale: 1.5 });
+      const pngBlob = await new Promise((r) => canvas.toBlob(r, "image/png", 0.92));
+      document.body.removeChild(cont);
+      if (!pngBlob) return;
+
+      const previewPath = `previews/${file.fullPath}.png`;
+      await uploadBytesResumable(sRef(storage, previewPath), pngBlob, {
+        contentType: "image/png",
+      });
+      const metaId = base64url(normalizeKey(file.fullPath));
+      await setDoc(
+        doc(db, "metas", metaId),
+        {
+          preview_img_path: previewPath,
+          preview_generated_at: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      const dl = await getDownloadURL(absPreviewRef(previewPath));
+      setPreviewImgUrl(dl);
+    } catch (e) {
+      console.warn("generateAndUploadPreview failed", e);
     }
   }
   function closePreview() {
     setPreviewOpen(false);
     setPreviewFile(null);
     setPreviewUrl("");
+    setPreviewImgUrl("");
+    setPreviewPdfUrl("");
   }
 
   // Sélection (admin uniquement)
@@ -662,28 +799,14 @@ export default function SharePointTable({
         "response-content-disposition",
         `attachment; filename*=UTF-8''${encoded}`
       );
-
-      // 1) Tentative via <a download> sans target (évite les popups)
+      // Téléchargement via <a download> (évite doubles déclenchements)
       const a = document.createElement("a");
       a.href = url.toString();
       a.download = fileName;
-      a.style.display = "none";
+      a.rel = "noopener";
       document.body.appendChild(a);
       a.click();
       a.remove();
-
-      // 2) Fallback via iframe caché (au cas où le navigateur ignore download)
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      const iframe = document.createElement("iframe");
-      iframe.style.display = "none";
-      iframe.referrerPolicy = "no-referrer";
-      iframe.src = url.toString();
-      document.body.appendChild(iframe);
-      setTimeout(() => {
-        try {
-          document.body.removeChild(iframe);
-        } catch {}
-      }, 3000);
       try {
         await logActivity(db, auth.currentUser, {
           action: "download_file",
@@ -980,7 +1103,7 @@ export default function SharePointTable({
                         <button
                           className="truncate text-left w-full"
                           title={file.name}
-                          onClick={() => openPreview(file)}
+                          onClick={() => navigate(`/preview?path=${encodeURIComponent(file.fullPath)}&from=${encodeURIComponent(currentPath || "")}`)}
                         >
                           {file.name.replace(/^\d+_/, "")}
                         </button>
@@ -1177,7 +1300,7 @@ export default function SharePointTable({
                 <button
                   className="flex-1 font-semibold truncate text-left min-w-0"
                   title={file.name}
-                  onClick={() => openPreview(file)}
+                  onClick={() => navigate(`/preview?path=${encodeURIComponent(file.fullPath)}&from=${encodeURIComponent(currentPath || "")}`)}
                 >
                   {file.name.replace(/^\d+_/, "")}
                 </button>
@@ -1236,6 +1359,20 @@ export default function SharePointTable({
           <div className="w-full max-w-3xl mx-auto p-4">
             <div className="w-full h-[60vh] md:h-[70vh] border rounded-lg bg-white overflow-hidden">
               <div className="w-full h-full overflow-auto flex items-center justify-center">
+                {previewFile && previewPdfUrl && (
+                  <iframe
+                    src={previewPdfUrl}
+                    title={previewFile.name}
+                    className="w-full h-full"
+                  />
+                )}
+                {previewFile && !previewPdfUrl && previewImgUrl && (
+                  <img
+                    src={previewImgUrl}
+                    alt={previewFile.name}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                )}
                 {previewFile &&
                   kindFromName(previewFile.name) === "image" &&
                   previewUrl && (
@@ -1247,7 +1384,7 @@ export default function SharePointTable({
                   )}
                 {previewFile &&
                   kindFromName(previewFile.name) === "pdf" &&
-                  previewUrl && (
+                  previewUrl && !previewPdfUrl && (
                     <iframe
                       src={previewUrl}
                       title={previewFile.name}
@@ -1263,17 +1400,18 @@ export default function SharePointTable({
                       className="w-full h-full object-contain"
                     />
                   )}
-                {previewFile &&
-                  kindFromName(previewFile.name) === "office" &&
-                  previewUrl && (
-                    <iframe
-                      title={previewFile.name}
-                      className="w-full h-full"
-                      src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(
-                        previewUrl
-                      )}`}
-                    />
-                  )}
+                {previewFile && !previewImgUrl && kindFromName(previewFile.name) === "office" && (
+                  <div className="flex flex-col items-center justify-center text-gray-500 p-4">
+                    <p>Aperçu indisponible pour ce type de fichier.</p>
+                    <a
+                      className="btn-primary mt-3"
+                      href={previewUrl}
+                      download={previewFile.name.replace(/^\d+_/, "")}
+                    >
+                      Télécharger
+                    </a>
+                  </div>
+                )}
                 {previewFile &&
                   kindFromName(previewFile.name) === "other" &&
                   previewUrl && (
@@ -1542,4 +1680,243 @@ function AccessReadOnly({ blockPath }) {
       </div>
     </div>
   );
+}
+
+/* ===================== Office internal preview helpers ===================== */
+async function buildOfficePreviewHTMLFromBlob(blob, filename) {
+  const lower = (filename || "").toLowerCase();
+  try {
+    if (/\.(docx?)$/.test(lower)) return await buildDocxHTML(blob);
+    if (/\.(xlsx?)$/.test(lower)) return await buildXlsxHTML(blob);
+    return "";
+  } catch (e) {
+    console.warn("buildOfficePreview failed", e);
+    return "";
+  }
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+async function buildDocxHTML(blob) {
+  const zip = await JSZip.loadAsync(blob);
+  const docEntry = zip.file("word/document.xml");
+  if (!docEntry) return "";
+  const relsEntry = zip.file("word/_rels/document.xml.rels");
+  const relsMap = new Map();
+  if (relsEntry) {
+    const relsXML = await relsEntry.async("string");
+    const rdoc = new DOMParser().parseFromString(relsXML, "application/xml");
+    Array.from(rdoc.getElementsByTagName("Relationship")).forEach((n) => {
+      relsMap.set(n.getAttribute("Id"), n.getAttribute("Target"));
+    });
+  }
+  const xml = await docEntry.async("string");
+  const doc = new DOMParser().parseFromString(xml, "application/xml");
+  const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  const A = "http://schemas.openxmlformats.org/drawingml/2006/main";
+  const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+  async function renderRun(r) {
+    const rPr = r.getElementsByTagNameNS(W, "rPr")[0];
+    let style = "";
+    let open = "";
+    let close = "";
+    if (rPr) {
+      if (rPr.getElementsByTagNameNS(W, "b").length) {
+        open += "<b>";
+        close = "</b>" + close;
+      }
+      if (rPr.getElementsByTagNameNS(W, "i").length) {
+        open += "<i>";
+        close = "</i>" + close;
+      }
+      if (rPr.getElementsByTagNameNS(W, "u").length) {
+        open += "<u>";
+        close = "</u>" + close;
+      }
+      const color = rPr.getElementsByTagNameNS(W, "color")[0]?.getAttribute("val");
+      if (color) style += `color:#${color};`;
+      const sz = rPr.getElementsByTagNameNS(W, "sz")[0]?.getAttribute("val");
+      if (sz) style += `font-size:${Number(sz) / 2}pt;`;
+    }
+    let content = "";
+    const ts = r.getElementsByTagNameNS(W, "t");
+    for (const t of Array.from(ts)) content += esc(t.textContent || "");
+    if (!ts.length) {
+      if (r.getElementsByTagNameNS(W, "br").length) content += "<br/>";
+      if (r.getElementsByTagNameNS(W, "tab").length) content += "&nbsp;&nbsp;&nbsp;&nbsp;";
+    }
+
+    // images (w:drawing -> a:blip r:embed)
+    const drawings = r.getElementsByTagNameNS(W, "drawing");
+    if (drawings.length) {
+      for (const d of Array.from(drawings)) {
+        const blips = d.getElementsByTagNameNS(A, "blip");
+        for (const blip of Array.from(blips)) {
+          const rid =
+            blip.getAttributeNS(R, "embed") ||
+            blip.getAttribute("r:embed") ||
+            blip.getAttribute("r:link");
+          if (rid && relsMap.has(rid)) {
+            const target = relsMap.get(rid).replace(/^\//, "");
+            const path = target.startsWith("word/") ? target : `word/${target}`;
+            const file = zip.file(path);
+            if (file) {
+              const base64 = await file.async("base64");
+              const ext = (path.split(".").pop() || "png").toLowerCase();
+              const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
+              content += `<img src="data:${mime};base64,${base64}" style="max-width:100%;" />`;
+            }
+          }
+        }
+      }
+    }
+    // VML fallback: v:imagedata r:id
+    const vimgs = r.getElementsByTagName("v:imagedata");
+    if (vimgs.length) {
+      for (const vi of Array.from(vimgs)) {
+        const rid = vi.getAttribute("r:id") || vi.getAttributeNS(R, "id");
+        if (rid && relsMap.has(rid)) {
+          const target = relsMap.get(rid).replace(/^\//, "");
+          const path = target.startsWith("word/") ? target : `word/${target}`;
+          const file = zip.file(path);
+          if (file) {
+            const base64 = await file.async("base64");
+            const ext = (path.split(".").pop() || "png").toLowerCase();
+            const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
+            content += `<img src="data:${mime};base64,${base64}" style="max-width:100%;" />`;
+          }
+        }
+      }
+    }
+
+    if (style) return `${open}<span style="${style}">${content}</span>${close}`;
+    return open + content + close;
+  }
+
+  async function renderParagraph(p) {
+    const runs = Array.from(p.getElementsByTagNameNS(W, "r"));
+    const parts = await Promise.all(runs.map((r) => renderRun(r)));
+    const txt = parts.join("") || "&nbsp;";
+    // alignment
+    const jc = p.getElementsByTagNameNS(W, "jc")[0]?.getAttribute("val");
+    const style = jc ? `text-align:${jc};` : "";
+    return `<p style="${style}">${txt}</p>`;
+  }
+
+  async function renderTable(tbl) {
+    const rows = Array.from(tbl.getElementsByTagNameNS(W, "tr"));
+    const trsArr = [];
+    for (const tr of rows) {
+      const tcs = Array.from(tr.getElementsByTagNameNS(W, "tc"));
+      const cellHtml = [];
+      for (const tc of tcs) {
+        const innerPs = Array.from(tc.getElementsByTagNameNS(W, "p"));
+        const innerParts = await Promise.all(innerPs.map((p) => renderParagraph(p)));
+        const inner = innerParts.join("");
+        cellHtml.push(`<td class=\"border px-2 py-1 align-top\">${inner}</td>`);
+      }
+      trsArr.push(`<tr>${cellHtml.join("")}</tr>`);
+    }
+    const trs = trsArr.join("");
+    return `<table class=\"min-w-full border-collapse\"><tbody>${trs}</tbody></table>`;
+  }
+
+  const children = Array.from(doc.documentElement.childNodes);
+  const parts = [];
+  for (const node of children) {
+    if (node.namespaceURI === W && node.localName === "p") parts.push(renderParagraph(node));
+    else if (node.namespaceURI === W && node.localName === "tbl") parts.push(renderTable(node));
+  }
+  const resolved = await Promise.all(parts);
+  return resolved.join("\n");
+}
+
+function colLettersToIndex(ref) {
+  let s = ref.replace(/\d+/g, "");
+  let n = 0;
+  for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+  return n - 1;
+}
+
+async function buildXlsxHTML(blob) {
+  const zip = await JSZip.loadAsync(blob);
+  // Shared strings
+  let sst = [];
+  const sstEntry = zip.file("xl/sharedStrings.xml");
+  if (sstEntry) {
+    const xml = await sstEntry.async("string");
+    const doc = new DOMParser().parseFromString(xml, "application/xml");
+    sst = Array.from(doc.getElementsByTagName("si")).map((si) => {
+      const ts = si.getElementsByTagName("t");
+      let txt = "";
+      for (const t of Array.from(ts)) txt += t.textContent || "";
+      return txt;
+    });
+  }
+
+  // Workbook => list of sheets
+  const wbXml = await zip.file("xl/workbook.xml").async("string");
+  const wb = new DOMParser().parseFromString(wbXml, "application/xml");
+  const sheets = Array.from(wb.getElementsByTagName("sheet")).map((el) => ({
+    name: el.getAttribute("name") || "Feuille",
+    rId: el.getAttribute("r:id"),
+  }));
+  const relXml = await zip.file("xl/_rels/workbook.xml.rels").async("string");
+  const relDoc = new DOMParser().parseFromString(relXml, "application/xml");
+  function pathFor(rId) {
+    const rel = Array.from(relDoc.getElementsByTagName("Relationship")).find(
+      (n) => n.getAttribute("Id") === rId
+    );
+    const target = rel?.getAttribute("Target") || "worksheets/sheet1.xml";
+    return `xl/${target.replace(/^\//, "")}`;
+  }
+
+  // Render first sheet only (to keep fast)
+  const first = sheets[0];
+  const sheetPath = pathFor(first?.rId);
+  const sheetXml = await zip.file(sheetPath).async("string");
+  const sdoc = new DOMParser().parseFromString(sheetXml, "application/xml");
+
+  // Build table
+  let maxCol = 0;
+  const rows = Array.from(sdoc.getElementsByTagName("row"));
+  const table = [];
+  for (const row of rows) {
+    const arr = [];
+    for (const c of Array.from(row.getElementsByTagName("c"))) {
+      const ref = c.getAttribute("r") || "";
+      const ci = colLettersToIndex(ref);
+      if (ci > maxCol) maxCol = ci;
+      let val = "";
+      const t = c.getAttribute("t");
+      const v = c.getElementsByTagName("v")[0];
+      const is = c.getElementsByTagName("is")[0];
+      if (t === "s" && v) {
+        val = sst[parseInt(v.textContent || "0", 10)] ?? "";
+      } else if (t === "inlineStr" && is) {
+        const tnode = is.getElementsByTagName("t")[0];
+        val = tnode?.textContent || "";
+      } else if (v) {
+        val = v.textContent || "";
+      }
+      arr[ci] = esc(val);
+    }
+    table.push(arr);
+  }
+  const rowsHTML = table
+    .map((r) => {
+      const tds = [];
+      for (let i = 0; i <= maxCol; i++) tds.push(`<td class=\"border px-2 py-1\">${r[i] || ""}</td>`);
+      return `<tr>${tds.join("")}</tr>`;
+    })
+    .join("");
+  return `<div class=\"overflow-auto\"><table class=\"min-w-full text-sm border-collapse\"><tbody>${rowsHTML}</tbody></table></div>`;
 }
