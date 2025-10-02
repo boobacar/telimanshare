@@ -111,26 +111,6 @@ async function getEffectiveMeta(path, cache) {
     cache.set(exact, m);
     return m;
   }
-
-  // Initialiser la liste d'e-mails (tags) quand le modal s'ouvre
-  useEffect(() => {
-    if (!accessOpen) return;
-    const list = (accessEmails || "")
-      .split(/[\s,;]+/)
-      .map((e) => (e || "").trim().toLowerCase())
-      .filter(Boolean);
-    const seen = new Set();
-    const uniq = [];
-    for (const e of list) {
-      if (!seen.has(e)) {
-        uniq.push(e);
-        seen.add(e);
-      }
-    }
-    setAccessEmailList(uniq);
-    setAccessPendingEmail("");
-  }, [accessOpen, accessEmails]);
-
   
 
   const parts = exact.endsWith("/")
@@ -216,6 +196,25 @@ export default function SharePointTable({
   const [accessEmailList, setAccessEmailList] = useState([]);
   const [accessPendingEmail, setAccessPendingEmail] = useState("");
   const [accessIsFolder, setAccessIsFolder] = useState(false);
+
+  // Initialiser la liste d'e-mails (tags) quand le modal s'ouvre
+  useEffect(() => {
+    if (!accessOpen) return;
+    const list = (accessEmails || "")
+      .split(/[\s,;]+/)
+      .map((e) => (e || "").trim().toLowerCase())
+      .filter(Boolean);
+    const seen = new Set();
+    const uniq = [];
+    for (const e of list) {
+      if (!seen.has(e)) {
+        uniq.push(e);
+        seen.add(e);
+      }
+    }
+    setAccessEmailList(uniq);
+    setAccessPendingEmail("");
+  }, [accessOpen, accessEmails]);
 
   // Toast
   const [toastOpen, setToastOpen] = useState(false);
